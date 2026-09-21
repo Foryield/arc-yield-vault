@@ -1,0 +1,17 @@
+# Foundry
+/out
+/cache
+/broadcast/*/31337/
+/broadcast/**/dry-run/
+lcov.info
+
+# Node (scripts/cctp)
+node_modules/
+
+# Local secrets: never versioned
+.env
+.env.*
+!.env.example
+*.keystore
+
+.DS_Store
