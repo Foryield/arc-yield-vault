@@ -19,3 +19,23 @@ jobs:
       - run: forge fmt --check
       - run: forge build --sizes
       - run: forge test -vvv
+      - name: Coverage gate (95 % of lines and branches in src/)
+        run: |
+          forge coverage --report summary --no-match-coverage "(test|script)/" | tee coverage.txt
+          total=$(grep -E '^\| Total' coverage.txt)
+          lines=$(echo "$total" | awk -F'|' '{print $3}' | grep -oE '[0-9.]+%' | tr -d %)
+          branches=$(echo "$total" | awk -F'|' '{print $5}' | grep -oE '[0-9.]+%' | tr -d %)
+          awk -v l="$lines" -v b="$branches" 'BEGIN {
+            if (l < 95 || b < 95) { printf "Coverage below 95 %%: lines %s, branches %s\n", l, b; exit 1 }
+          }'
+
+  slither:
+    name: Slither
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: crytic/slither-action@v0.4.2
+        with:
+          fail-on: low

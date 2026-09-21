@@ -1,0 +1,35 @@
+name: Arc mainnet fork
+
+# Runs the vault against a real Morpho Vault V2 on a local fork of Arc mainnet. Nothing is
+# broadcast. Kept out of the main CI: it depends on the public Arc RPC being reachable.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  fork:
+    name: Galaxy USDC fork test
+    runs-on: ubuntu-latest
+    env:
+      ARC_FOUNDRY_VERSION: v0.8.0-2
+      ARC_FOUNDRY_ASSET: arc-foundry-v0.8.0-2-x86_64-unknown-linux-gnu.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Arc Foundry (checksum verified)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$ARC_FOUNDRY_VERSION" -R circlefin/arc-foundry \
+            -p "$ARC_FOUNDRY_ASSET" -p "$ARC_FOUNDRY_ASSET.sha256"
+          sha256sum -c "$ARC_FOUNDRY_ASSET.sha256"
+          mkdir -p "$HOME/arc-foundry" && tar xzf "$ARC_FOUNDRY_ASSET" -C "$HOME/arc-foundry"
+      - name: Fork test
+        run: |
+          "$HOME/arc-foundry/forge" test --isolate -vvv \
+            --match-path test/fork/MorphoArcMainnet.fork.t.sol \
+            --fork-url https://rpc.mainnet.arc.io
