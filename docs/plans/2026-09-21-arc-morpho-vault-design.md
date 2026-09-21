@@ -1,6 +1,6 @@
 # Arc YieldVault : conception et plan d'exécution
 
-Date : 2026-09-21. Statut : à valider avant tout code.
+Date : 2026-09-21. Statut : validé le 2026-09-21 (architecture A, dépôts ouverts, seuil de couverture 95 %).
 
 ## 1. Objet
 
@@ -31,7 +31,7 @@ Cadre fixé :
 | S4 | CCTP v2 Base Sepolia vers Arc testnet : adresses Base Sepolia, endpoint d'attestation sandbox, EURC sur cette route | Un burn et un mint testnet réussis pour l'USDC ; statut EURC constaté |
 | S5 | `arc-anvil` fork-t-il le mainnet Arc sous macOS arm64, et le RPC mainnet public accepte-t-il les lectures ? | Un test fork qui lit `totalAssets()` du vault Morpho mainnet visé |
 
-Si S3 échoue, la cible testnet est un ERC-4626 de démonstration (`DemoYieldSource`, OpenZeppelin minimal), nommé comme tel partout. Le comportement face à un vrai Vault V2 est alors prouvé par le test fork S5, en lecture seule, sans rien déployer sur mainnet.
+Résultat (voir [2026-09-21-spikes.md](./2026-09-21-spikes.md)) : S3 a réussi, la cible testnet est un vrai Morpho Vault V2 déployé par nous, sans adaptateur, donc sans rendement. La hausse de NAV face à un vault Morpho curaté est prouvée par le test sur copie du mainnet (S5), sans rien déployer sur mainnet.
 
 ## 4. Architecture du contrat
 
@@ -61,25 +61,26 @@ Si S3 échoue, la cible testnet est un ERC-4626 de démonstration (`DemoYieldSou
 
 - `morphoVault` immuable ; le constructeur vérifie `morphoVault.asset() == asset()`.
 - `totalAssets()` : `convertToAssets(parts Morpho détenues)` plus le solde idle. Arrondi vers le bas, donc favorable au coffre.
-- Dépôt : après encaissement, placement de `min(solde idle, morphoVault.maxDeposit(this))`. Approbation du montant exact, remise à zéro contrôlée après l'appel. L'excédent refusé par un plafond Morpho reste idle et émet un événement `IdleAssets`, sans jamais faire échouer le dépôt.
-- Retrait : prélève d'abord l'idle, puis retire le manque de Morpho. Si Morpho n'a pas la liquidité, `InsufficientLiquidity` et aucun état modifié.
+- **Les fonctions `max*` d'un Morpho Vault V2 renvoient toujours 0** (`maxDeposit`, `maxMint`, `maxWithdraw`, `maxRedeem` sont `pure` dans `VaultV2.sol`, lu le 2026-09-21 et constaté on-chain sur les vaults mainnet du §2). Le coffre ne les appelle donc jamais : elles ne disent rien de la capacité réelle.
+- Dépôt : après encaissement, tout le solde idle est placé dans Morpho dans la même transaction, comme le coffre Soroban le fait avec Blend. Approbation du montant exact, allowance vérifiée à zéro après l'appel. Si Morpho refuse (plafond, gate, pause), la transaction entière échoue : aucun dépôt n'est accepté sans être placé, et il n'existe pas d'état idle silencieux à surveiller.
+- Retrait : prélève d'abord l'idle, puis retire le manque de Morpho et vérifie le montant réellement reçu. Si Morpho n'a pas la liquidité, son `withdraw` échoue et la transaction entière avec, sans état modifié.
 - `emergencyDeallocate()` (owner ou guardian) : rachète toutes les parts Morpho vers l'idle. Si Morpho manque de liquidité, la procédure opérationnelle `forceDeallocate` côté Morpho est documentée dans le README, pas implémentée.
 - Aucune fonction ne tire des fonds d'une adresse fournie par l'appelant sans que ce soit `msg.sender` ou un owner ERC-4626 ayant donné son approbation (sémantique standard).
 
-### 4.4 Point à trancher : qui peut déposer
+### 4.4 Qui peut déposer
 
 - **(i) Dépôts ouverts** (ERC-4626 standard) : n'importe quel compte testnet peut déposer et racheter, comme la démo Soroban. Montre le produit sans intermédiaire.
 - **(ii) Dépôts réservés à l'owner** : un wallet de pool dépose pour le compte de clients, comptés hors chaîne. Plus proche d'un modèle custodial poolé, mais la démo ne montre qu'un seul déposant.
 
-Proposition : (i), car la démo doit être reproductible par un relecteur du grant avec le faucet Circle, sans nous demander d'agir.
+Retenu : (i), car la démo doit être reproductible par un relecteur du grant avec le faucet Circle, sans nous demander d'agir.
 
 ## 5. Tests
 
-- `test/YieldVault.t.sol` et `test/MorphoYieldVault.t.sol` : unitaires, forge standard, `MockERC20` 6 décimales et `MockERC4626Target` (rendement simulé, plafond de dépôt, liquidité limitée).
-- Cas obligatoires : constructeur (actif incohérent, adresse nulle, rôles cumulés) ; dépôt placé en entier, allowance nulle ensuite ; plafond Morpho et idle ; montée de NAV après rendement ; retrait et rachat ; arrondi après retrait Morpho (le client ne reçoit jamais plus que `previewRedeem`) ; liquidité insuffisante sans effet de bord ; pause, désallocation, évacuation et état terminal ; appels non autorisés par un tiers (sender, receiver et owner toujours distincts dans les helpers).
+- `test/YieldVault.t.sol` et `test/MorphoYieldVault.t.sol` : unitaires, forge standard, `MockERC20` 6 décimales et `MockERC4626Target` (rendement simulé, refus de dépôt, liquidité limitée, `max*` à 0 comme un Vault V2).
+- Cas obligatoires : constructeur (actif incohérent, adresse nulle, rôles cumulés) ; dépôt placé en entier, allowance nulle ensuite ; refus de Morpho qui fait échouer le dépôt entier ; montée de NAV après rendement ; retrait et rachat ; arrondi après retrait Morpho (le client ne reçoit jamais plus que `previewRedeem`) ; liquidité insuffisante sans effet de bord ; pause, désallocation, évacuation et état terminal ; appels non autorisés par un tiers (sender, receiver et owner toujours distincts dans les helpers).
 - `test/MorphoYieldVault.fuzz.t.sol` : invariant de solvabilité `totalAssets() >= convertToAssets(totalSupply())` sur dépôts, rendements et retraits aléatoires.
 - `test/fork/MorphoArcMainnet.fork.t.sol` : sous `arc-anvil` uniquement, dépôt puis rachat contre le Vault V2 USDC mainnet retenu, en lecture sur une copie locale. Ignoré en CI si le binaire manque, et dit dans le journal.
-- CI GitHub Actions : `forge fmt --check`, `forge build`, `forge test`, `forge coverage` avec un seuil bloquant de 95 % des lignes et des branches sur `src/` (hors cible de démo), Slither sans finding haut ou moyen.
+- CI GitHub Actions : `forge fmt --check`, `forge build`, `forge test`, `forge coverage` avec un seuil bloquant de 95 % des lignes et des branches sur `src/`, Slither sans finding haut ou moyen.
 
 ## 6. Script CCTP
 
@@ -102,7 +103,8 @@ README.md                     portée, adresses testnet, interface, build, dépl
 .gitignore  .gitmodules  foundry.toml
 src/YieldVault.sol
 src/MorphoYieldVault.sol
-src/demo/DemoYieldSource.sol  seulement si S3 échoue
+lib/vault-v2                  submodule Morpho épinglé, jamais importé par src/
+script/deploy-morpho-target.sh  déploie le Vault V2 cible sur testnet
 script/Deploy.s.sol
 script/DemoFlow.s.sol         dépôt et rachat de démo
 test/YieldVault.t.sol
