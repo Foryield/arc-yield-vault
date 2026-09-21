@@ -8,6 +8,11 @@ commande. La partie 6, facultative, rejoue les tests pour un profil développeur
 Tout se passe sur **Arc testnet** : les jetons n'ont aucune valeur et rien n'est irréversible
 pour ForYield.
 
+**Démo web.** [arc.for-yield.com](https://arc.for-yield.com) fait le dépôt et le rachat en
+quelques clics : connexion du portefeuille, ajout d'Arc testnet, approbation du montant exact,
+dépôt, rachat, lien vers chaque transaction. Commencer par là (parties 1 puis 3 bis), puis
+reprendre le parcours par l'explorateur (parties 2 à 5), qui montre chaque appel au contrat.
+
 ## Repères
 
 | Élément | Adresse | Lien |
@@ -90,6 +95,20 @@ l'explorateur) :
 - [ ] Sur le coffre, `totalAssets` a augmenté de `1000000` et le solde USDC du coffre lui-même
   est à `0` : tout est chez Morpho.
 
+## 3 bis. Même chose depuis la démo web
+
+Sur [arc.for-yield.com](https://arc.for-yield.com), onglet **USDC** :
+
+- [ ] **Connect wallet** propose d'ajouter ou de sélectionner Arc Testnet dans MetaMask.
+- [ ] Les lignes « Vault total » et « Supplied to Morpho » affichent la même valeur : tout est
+  chez Morpho.
+- [ ] Dépôt de `1` : MetaMask demande d'abord l'approbation d'exactement 1 USDC, puis le
+  dépôt. Le bandeau vert renvoie vers la transaction sur l'explorateur.
+- [ ] « Your vault position » affiche environ 1 USDC de plus.
+- [ ] Onglet **Redeem**, bouton **Redeem everything** : la position revient à `0` et l'USDC
+  revient dans le portefeuille.
+- [ ] Le lien `https://arc.for-yield.com/?vault=eurc` ouvre directement l'onglet EURC.
+
 ## 4. Racheter ses parts
 
 Sur le coffre, **Write**, appeler `redeem` :
@@ -156,6 +175,7 @@ capture d'écran de la page de l'explorateur.
 
 | Étape | Résultat attendu | Hash ou message | OK |
 |---|---|---|---|
+| 3 bis démo web | dépôt puis rachat depuis arc.for-yield.com | | |
 | 3.1 approve USDC | Success | | |
 | 3.2 deposit 1 USDC | Success, deux transferts d'USDC dans la même transaction | | |
 | Lectures après dépôt | allowances à 0, solde du coffre à 0 | | |

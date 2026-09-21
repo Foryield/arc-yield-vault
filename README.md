@@ -17,6 +17,15 @@ offer of a financial service; the deployments below are testnet only.
 > script that moves USDC from Base Sepolia to Arc. StableFX, Gateway, an Aave V4 adapter
 > and a compliance event schema are planned milestones, not part of this code.
 
+## Live demo
+
+**[arc.for-yield.com](https://arc.for-yield.com)**: connect a browser wallet on Arc testnet,
+deposit USDC or EURC and redeem it. The page adds Arc testnet to the wallet, approves the exact
+amount, and links every transaction to the explorer. `?vault=eurc` opens the EURC instance.
+Testnet USDC and EURC come from [Circle's faucet](https://faucet.circle.com). The page is a
+static Next.js export in [`web/`](./web/), deployed on Render from
+[`render.yaml`](./render.yaml).
+
 ## Testnet deployments
 
 Network: Arc **testnet**, chain id 5042002, explorer
@@ -127,7 +136,7 @@ forge test
   ```
 
 CI enforces formatting, the test suite, 95 % line and branch coverage of `src/` (currently
-100 %) and a clean Slither run. The mainnet fork test runs weekly in a separate workflow.
+100 %), a clean Slither run, and a type-checked build of the web demo. The mainnet fork test runs weekly in a separate workflow.
 
 ## Deploy (testnet)
 
