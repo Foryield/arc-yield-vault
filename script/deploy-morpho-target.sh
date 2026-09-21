@@ -7,7 +7,8 @@
 # MIT sources. The instance has no adapter, so deposits stay idle inside it and earn nothing: it is
 # real Morpho code, not a curated Morpho vault.
 #
-# Usage: ASSET=<token address> [ACCOUNT=arc-admin] script/deploy-morpho-target.sh
+# Usage: ASSET=<token address> [ACCOUNT=arc-admin] [OWNER=<address>] script/deploy-morpho-target.sh
+# Passing OWNER (the account's address) saves one keystore password prompt.
 set -euo pipefail
 
 VAULT_V2_COMMIT=a0ba9df0ea697a080c0de69c18b84738cfb3bef7
@@ -23,7 +24,7 @@ if [[ "$chain_id" != "$ARC_TESTNET_CHAIN_ID" ]]; then
   exit 1
 fi
 
-owner="$(cast wallet address --account "$ACCOUNT")"
+owner="${OWNER:-$(cast wallet address --account "$ACCOUNT")}"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
