@@ -11,6 +11,10 @@
 // Usage (Node 24+, no dependency):
 //   SENDER=0x… [RECIPIENT=0x…] [AMOUNT=1000000] [ACCOUNT=arc-depositor] \
 //     node scripts/cctp/base-sepolia-to-arc.ts
+//
+// Resuming after an interruption (e.g. an attestation outage): a burn stays mintable once
+// Circle attests it, so pass its hash to skip straight to steps 3 and 4:
+//   SENDER=0x… BURN_TX=0x… node scripts/cctp/base-sepolia-to-arc.ts
 
 import { execFileSync } from "node:child_process";
 
@@ -38,6 +42,10 @@ const recipient = requireAddress("RECIPIENT", process.env.RECIPIENT ?? sender);
 const account = process.env.ACCOUNT ?? "arc-depositor";
 const amount = BigInt(process.env.AMOUNT ?? "1000000");
 if (amount <= 0n) throw new Error("AMOUNT must be positive");
+const resumeBurnTx = process.env.BURN_TX;
+if (resumeBurnTx !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(resumeBurnTx)) {
+  throw new Error("BURN_TX must be a 0x-prefixed transaction hash");
+}
 
 function cast(args: string[]): string {
   // stdin and stderr stay on the terminal so cast can prompt for the keystore password.
@@ -104,13 +112,33 @@ async function main(): Promise<void> {
     if (chainId !== chain.chainId) throw new Error(`${chain.rpc} is chain ${chainId}, not ${chain.chainId}`);
   }
 
+  const arcBefore = read(ARC_TESTNET.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
+  const started = Date.now();
+  const burn = resumeBurnTx ? { burnHash: resumeBurnTx } : await approveAndBurn();
+  console.log(`Burned: ${burn.burnHash}. Waiting for Circle's attestation…`);
+
+  const { message, attestation } = await waitForAttestation(burn.burnHash);
+  const mintHash = send(ARC_TESTNET.rpc, MESSAGE_TRANSMITTER_V2, "receiveMessage(bytes,bytes)", message, attestation);
+  const arcAfter = read(ARC_TESTNET.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
+
+  // The recipient pays the mint's gas in USDC when it also relays it, so the net change
+  // understates the minted amount by that gas; the Mint event on Arc carries the exact figure.
+  console.log(JSON.stringify({
+    route: "Base Sepolia (domain 6) -> Arc testnet (domain 26)",
+    ...burn,
+    mintTx: mintHash,
+    recipient,
+    arcBalanceChange: formatUsdc(arcAfter - arcBefore),
+    elapsedSeconds: Math.round((Date.now() - started) / 1000),
+  }, null, 2));
+}
+
+async function approveAndBurn() {
   const balance = read(BASE_SEPOLIA.rpc, USDC_BASE_SEPOLIA, "balanceOf(address)(uint256)", sender);
   if (balance < amount) throw new Error(`sender holds ${formatUsdc(balance)} on Base Sepolia`);
   const maxFee = await fastTransferMaxFee();
-  const arcBefore = read(ARC_TESTNET.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
   console.log(`Burning ${formatUsdc(amount)} on Base Sepolia, max fee ${formatUsdc(maxFee)}`);
 
-  const started = Date.now();
   const approveHash = send(
     BASE_SEPOLIA.rpc, USDC_BASE_SEPOLIA, "approve(address,uint256)", TOKEN_MESSENGER_V2, amount.toString(),
   );
@@ -129,26 +157,13 @@ async function main(): Promise<void> {
   const allowanceLeft = read(
     BASE_SEPOLIA.rpc, USDC_BASE_SEPOLIA, "allowance(address,address)(uint256)", sender, TOKEN_MESSENGER_V2,
   );
-  console.log(`Burned: ${burnHash}. Waiting for Circle's attestation…`);
-
-  const { message, attestation } = await waitForAttestation(burnHash);
-  const mintHash = send(ARC_TESTNET.rpc, MESSAGE_TRANSMITTER_V2, "receiveMessage(bytes,bytes)", message, attestation);
-  const arcAfter = read(ARC_TESTNET.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
-
-  // The recipient pays the mint's gas in USDC when it also relays it, so the net change
-  // understates the minted amount by that gas; the Mint event on Arc carries the exact figure.
-  console.log(JSON.stringify({
-    route: "Base Sepolia (domain 6) -> Arc testnet (domain 26)",
+  return {
     amount: formatUsdc(amount),
     maxFee: formatUsdc(maxFee),
     approveTx: approveHash,
-    burnTx: burnHash,
-    mintTx: mintHash,
+    burnHash,
     allowanceLeftAfterBurn: allowanceLeft.toString(),
-    recipient,
-    arcBalanceChange: formatUsdc(arcAfter - arcBefore),
-    elapsedSeconds: Math.round((Date.now() - started) / 1000),
-  }, null, 2));
+  };
 }
 
 main().catch((error: unknown) => {
