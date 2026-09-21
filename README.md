@@ -46,6 +46,10 @@ Evidence, with every transaction hash, block and post-state read on chain:
 - [docs/evidence/a2-cctp.md](./docs/evidence/a2-cctp.md): USDC moved from Base Sepolia to Arc
   testnet with CCTP v2.
 
+Screenshots per Circle product are in [docs/evidence/screenshots/](./docs/evidence/screenshots/).
+A step-by-step walkthrough to reproduce the demo from a browser wallet, with no command line,
+is in [docs/demo/fil-rouge-testeur.md](./docs/demo/fil-rouge-testeur.md) (French).
+
 ## How it works
 
 - **Deposit.** The vault pulls the assets from the caller (never from any other address),
