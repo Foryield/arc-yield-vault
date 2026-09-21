@@ -84,7 +84,7 @@ Retenu : (i), car la démo doit être reproductible par un relecteur du grant av
 
 ## 6. Script CCTP
 
-Deux approches : (a) script TypeScript avec `viem` (`scripts/cctp/`), qui enchaîne approbation exacte, `depositForBurn`, attente de l'attestation Circle et `receiveMessage` ; (b) commandes `cast` et `curl` dans un script shell. Choix : (a). Le sondage de l'attestation et le décodage de sa réponse sont du code, pas une commande, et le fichier sert de capture lisible pour la vidéo. `viem` est la seule dépendance ajoutée : rien dans le dépôt ne parle HTTP ni JSON-RPC typé.
+Deux approches : (a) script TypeScript avec `viem` ; (b) commandes `cast` et `curl` dans un script shell. Retenu à l'implémentation : un script TypeScript sans dépendance (`scripts/cctp/base-sepolia-to-arc.ts`, exécuté par Node 24 qui lit le TypeScript nativement), qui fait signer `cast` avec les keystores chiffrés et interroge l'API d'attestation avec `fetch`. Il garde la lisibilité de (a) pour la vidéo sans ajouter `viem`, et aucune clé privée ne passe par le processus Node ni par son environnement, ce que `viem` aurait exigé faute de savoir déchiffrer un keystore Foundry.
 
 Route : Base Sepolia vers Arc testnet, USDC. EURC si S4 le confirme, sinon EURC pris directement au faucet Circle sur Arc testnet et le point est noté.
 
@@ -112,7 +112,7 @@ test/MorphoYieldVault.t.sol
 test/MorphoYieldVault.fuzz.t.sol
 test/fork/MorphoArcMainnet.fork.t.sol
 test/mocks/MockERC20.sol  test/mocks/MockERC4626Target.sol
-scripts/cctp/base-sepolia-to-arc.ts  scripts/cctp/package.json
+scripts/cctp/base-sepolia-to-arc.ts
 .github/workflows/ci.yml
 docs/plans/2026-09-21-arc-morpho-vault-design.md   ce document
 docs/plans/2026-09-21-spikes.md                    verdicts S1 à S5
