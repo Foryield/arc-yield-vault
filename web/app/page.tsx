@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatUnits, parseUnits, type Address, type Hash } from "viem";
 import {
   FAUCET_URL,
@@ -59,11 +59,18 @@ export default function Home() {
 
   const { symbol, decimals } = vault.asset;
 
+  // Only the latest read may land: switching vault or account while an older read is in flight
+  // must not let that read overwrite the state of the instance now on screen.
+  const latestRead = useRef(0);
   const refresh = useCallback(async (v: VaultConfig, a: Address | null) => {
+    const id = ++latestRead.current;
     try {
-      setState(await readVault(v, a));
+      const next = await readVault(v, a);
+      if (id !== latestRead.current) return;
+      setState(next);
       setUnreachable(false);
     } catch {
+      if (id !== latestRead.current) return;
       setState(null);
       setUnreachable(true);
     }
@@ -215,8 +222,8 @@ export default function Home() {
 
         {unreachable && (
           <div className="status error">
-            Arc testnet cannot be reached from this browser right now. Reload the page in a
-            moment.
+            The vault could not be read from Arc testnet: the network is unreachable from this
+            browser, or the vault address is misconfigured. Reload the page in a moment.
           </div>
         )}
 

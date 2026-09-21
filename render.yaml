@@ -20,9 +20,14 @@ services:
       - key: NEXT_PUBLIC_ARC_RPC_URL
         value: https://rpc.testnet.arc.io
     headers:
+      # Next.js inlines its bootstrap scripts, with hashes that change on every build, hence
+      # 'unsafe-inline'; no external script origin is allowed. The page only calls the Arc RPC.
       - path: /*
         name: Content-Security-Policy
-        value: frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'
+        value: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://rpc.testnet.arc.io; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
       - path: /*
         name: X-Frame-Options
         value: DENY
