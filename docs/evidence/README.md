@@ -8,6 +8,7 @@ dated entry, and earlier entries stay as dated records.
 |---|---|
 | `a1-vault-testnet.md` | MorphoYieldVault on Arc testnet: USDC and EURC instances, deposit and redemption |
 | `a2-cctp.md` | USDC moved from Base Sepolia to Arc testnet with CCTP v2 |
+| `screenshots/` | PNG captures per Circle product, for the grant video |
 
 Each entry records:
 
