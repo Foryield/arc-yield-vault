@@ -8,7 +8,7 @@ TokenMessengerV2 `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA`, MessageTransmitte
 Account: `arc-depositor` `0x91405144F7ac4E9CcC26C32fbc475535d6110837`, sender on Base Sepolia and
 recipient on Arc testnet.
 
-## 2026-09-21: burn on Base Sepolia, mint pending on a Circle outage
+## 2026-09-21: burn on Base Sepolia, mint delayed by a Circle outage
 
 - **What it proves (so far)**: the burn half of a CCTP v2 Fast Transfer to Arc, with an exact
   approval fully consumed by the burn. The mint half is blocked on Circle's side, see below.
@@ -30,3 +30,23 @@ recipient on Arc testnet.
   Protocol" in major outage at 14:44 UTC. The burn remains mintable once attested:
   `BURN_TX=0xe913…75d7 node scripts/cctp/base-sepolia-to-arc.ts` resumes at the attestation
   step and relays `receiveMessage` on Arc.
+
+## 2026-09-21: attestation and mint on Arc testnet, transfer complete
+
+- **What it proves**: the full CCTP v2 route from Base Sepolia to Arc, completing the burn
+  above: Circle attests the burn message and native USDC is minted on Arc to the recipient.
+- **Attestation**: issued by Iris sandbox at 15:47:51 UTC, about 75 minutes after the burn, once
+  Circle's sandbox outage cleared. Decoded: destination domain 26, amount 1,000,000,
+  `feeExecuted` 130, `finalityThresholdExecuted` 1000 (Fast Transfer), mint recipient
+  `arc-depositor`.
+- **receiveMessage on Arc**, relayed by `arc-depositor` with the resume mode
+  (`BURN_TX=…`):
+  [`0x761c159a…57b2`](https://explorer.testnet.arc.io/tx/0x761c159a0ee845c36b94dcdbe18f3a6a6bafec62a04e3d6fbe56f69affe757b2)
+  (block 63299446, 19:35:00 UTC, 175,756 gas).
+- **Minted**: `MintAndWithdraw` from TokenMessengerV2 for 999,870 units (0.999870 USDC) to
+  `arc-depositor`, and 130 units (0.000130 USDC) to the CCTP fee recipient: 1 USDC burned on
+  Base Sepolia, 1 USDC minted on Arc. Each mint shows as two `Transfer` logs, one from the
+  native-balance system address `0xffff…fffe` (18 decimals) and one from the USDC ERC-20
+  `0x3600…0000` (6 decimals).
+- **Recipient balance on Arc**: up by 0.995302 USDC, the minted 0.999870 USDC less the
+  0.004567 USDC of gas the recipient paid to relay the mint itself.

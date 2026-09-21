@@ -12,7 +12,7 @@ and where it shows up on chain. Files land in this folder; each row below says w
 | `arc-eurc-deposit.png` | EURC on Arc | Explorer, deposit tx [`0x3f30e905…c14c`](https://explorer.testnet.arc.io/tx/0x3f30e9050fc69c616eed8f10d6c9ccd625ade5eb1f3bdcd342c448c498a1c14c) |
 | `cctp-code.png` | CCTP v2 | `scripts/cctp/base-sepolia-to-arc.ts`: `depositForBurn` to domain 26 and `receiveMessage` on Arc |
 | `cctp-burn.png` | CCTP v2 | Base Sepolia explorer, burn tx [`0xe9137539…75d7`](https://base-sepolia.blockscout.com/tx/0xe913753935d3286a361f930e89688f81190d3d3fbb54f8fb13cd72057a1675d7) |
-| `cctp-mint.png` | CCTP v2 | Arc explorer, the `receiveMessage` mint tx (recorded in `a2-cctp.md` once relayed) |
+| `cctp-mint.png` | CCTP v2 | Arc explorer, mint tx [`0x761c159a…57b2`](https://explorer.testnet.arc.io/tx/0x761c159a0ee845c36b94dcdbe18f3a6a6bafec62a04e3d6fbe56f69affe757b2): 0.999870 USDC minted to the depositor |
 | `morpho-code.png` | Morpho on Arc | `src/MorphoYieldVault.sol`: `_transferIn` supplying the exact amount to the Morpho Vault V2 |
 | `vault-verified.png` | Arc | Explorer page of the USDC vault showing the verified source |
 | `mainnet-fork-test.png` | Morpho on Arc mainnet | Terminal output of the fork test against Galaxy USDC, passing |
