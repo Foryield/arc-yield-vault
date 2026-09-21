@@ -31,7 +31,10 @@ git clone --quiet https://github.com/morpho-org/vault-v2.git "$workdir/vault-v2"
 git -C "$workdir/vault-v2" checkout --quiet "$VAULT_V2_COMMIT"
 git -C "$workdir/vault-v2" submodule update --init --recursive --quiet
 
-forge create --root "$workdir/vault-v2" src/VaultV2.sol:VaultV2 \
+# Run from inside the clone: source verification resolves contract paths from the working
+# directory, not from --root.
+cd "$workdir/vault-v2"
+forge create src/VaultV2.sol:VaultV2 \
   --rpc-url "$RPC_URL" --account "$ACCOUNT" --broadcast \
   --verify --verifier blockscout --verifier-url "$EXPLORER_API" \
   --constructor-args "$owner" "$ASSET"
