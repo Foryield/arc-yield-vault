@@ -8,8 +8,8 @@ services:
     buildCommand: npm ci && npm run build
     staticPublishPath: out
     pullRequestPreviewsEnabled: false
-    domains:
-      - arc.for-yield.com
+    # The custom domain arc.for-yield.com is attached in the Render dashboard, as on the Stellar
+    # and Solana demos: declaring it here made Blueprint syncs fail once it was attached.
     envVars:
       - key: NODE_VERSION
         value: "22"
