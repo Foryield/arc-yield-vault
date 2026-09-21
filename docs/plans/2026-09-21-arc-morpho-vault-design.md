@@ -103,7 +103,7 @@ README.md                     portée, adresses testnet, interface, build, dépl
 .gitignore  .gitmodules  foundry.toml
 src/YieldVault.sol
 src/MorphoYieldVault.sol
-lib/vault-v2                  submodule Morpho épinglé, jamais importé par src/
+(vault-v2 Morpho : cloné à un commit épinglé par le script de déploiement, jamais versionné ni importé)
 script/deploy-morpho-target.sh  déploie le Vault V2 cible sur testnet
 script/Deploy.s.sol
 script/DemoFlow.s.sol         dépôt et rachat de démo

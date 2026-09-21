@@ -47,8 +47,14 @@ contract MorphoYieldVault is YieldVault {
     }
 
     /// @notice Redeems the whole Morpho position into idle assets held by this vault. Funds never
-    ///         leave the vault; pair with pause + emergencyWithdraw to evacuate. If Morpho lacks
-    ///         liquidity this reverts, and Morpho's permissionless forceDeallocate is the way out.
+    ///         leave the vault; pair with pause + emergencyWithdraw to evacuate. Callable after
+    ///         termination too, so a position recovered later can still be swept.
+    /// @dev Two ways this can revert. If Morpho lacks liquidity, anyone can call Morpho's
+    ///      permissionless forceDeallocate to move liquidity back to Morpho's idle balance, then
+    ///      retry. If Morpho's curator gates this vault's address (sendSharesGate or
+    ///      receiveAssetsGate), every exit reverts, forceDeallocate included, and nothing in this
+    ///      contract can route around it: choosing and monitoring an ungated target is an
+    ///      operational requirement.
     function emergencyDeallocate() external onlyOwnerOrGuardian nonReentrant {
         uint256 morphoShares = MORPHO_VAULT.balanceOf(address(this));
         uint256 assets = MORPHO_VAULT.redeem(morphoShares, address(this), address(this));
