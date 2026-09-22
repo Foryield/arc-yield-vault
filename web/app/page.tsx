@@ -8,6 +8,7 @@ import {
   USDC_GAS_RESERVE,
   connectWallet,
   deposit,
+  disconnectWallet,
   exit,
   explorerAddress,
   explorerTx,
@@ -128,6 +129,13 @@ export default function Home() {
     }
   }
 
+  async function handleDisconnect() {
+    await disconnectWallet();
+    setAccount(null);
+    setMode("deposit");
+    reset();
+  }
+
   const parsed = parseAmount(amount, decimals);
   const available = state
     ? state.walletBalance - (vault.paysGas ? USDC_GAS_RESERVE : 0n)
@@ -233,7 +241,12 @@ export default function Home() {
           <>
             <div className="row">
               <span className="label">Wallet</span>
-              <span className="value mono">{shorten(account)}</span>
+              <span className="value mono">
+                {shorten(account)}
+                <button type="button" className="link" onClick={handleDisconnect} disabled={busy}>
+                  Disconnect
+                </button>
+              </span>
             </div>
             {state && (
               <>

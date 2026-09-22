@@ -101,16 +101,48 @@ async function ensureArcTestnet(): Promise<void> {
   }
 }
 
+// Set by an explicit disconnection, so a wallet that cannot revoke the site's permission is
+// not silently reconnected on the next load.
+const DISCONNECTED_KEY = "foryield-arc:disconnected";
+
+function rememberDisconnected(disconnected: boolean) {
+  try {
+    if (disconnected) localStorage.setItem(DISCONNECTED_KEY, "1");
+    else localStorage.removeItem(DISCONNECTED_KEY);
+  } catch (error) {
+    console.warn("Storage unavailable, the disconnection lasts until reload.", error);
+  }
+}
+
 export async function connectWallet(): Promise<Address> {
   const [account] = await provider().request({ method: "eth_requestAccounts" });
   if (!account) throw new Error("The wallet returned no account.");
   await ensureArcTestnet();
+  rememberDisconnected(false);
   return account;
+}
+
+/// Revokes the site's account permission (EIP-2255) where the wallet supports it.
+export async function disconnectWallet(): Promise<void> {
+  rememberDisconnected(true);
+  try {
+    await window.ethereum?.request({
+      method: "wallet_revokePermissions",
+      params: [{ eth_accounts: {} }],
+    });
+  } catch (error) {
+    console.warn("The wallet cannot revoke permissions; disconnected on this page only.", error);
+  }
 }
 
 /// Silent: returns the already-authorised account, if any, without prompting.
 export async function reconnectWallet(): Promise<Address | null> {
   if (!window.ethereum) return null;
+  try {
+    if (localStorage.getItem(DISCONNECTED_KEY)) return null;
+  } catch {
+    // Storage unavailable: nothing was remembered, fall through to the wallet.
+  }
   const [account] = await window.ethereum.request({ method: "eth_accounts" });
   return account ?? null;
 }

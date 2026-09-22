@@ -218,6 +218,23 @@ button.secondary {
   color: var(--text);
 }
 
+button.link {
+  width: auto;
+  margin: 0 0 0 12px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  text-decoration: underline dotted var(--muted);
+}
+
+button.link:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
 .status {
   margin-top: 18px;
   font-size: 13px;
