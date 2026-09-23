@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {YieldVault} from "../../src/YieldVault.sol";
 import {MorphoYieldVault} from "../../src/MorphoYieldVault.sol";
 
 /// @notice Runs the vault against a real, curated Morpho Vault V2 on a local fork of Arc mainnet.
@@ -25,8 +26,9 @@ contract MorphoArcMainnetForkTest is Test {
     IERC4626 internal constant GALAXY_USDC = IERC4626(0x8E357432CC12ff425c36432F312968aEb16112AF);
 
     MorphoYieldVault internal vault;
-    address internal alice = makeAddr("alice");
+    address internal owner = makeAddr("owner");
     address internal receiver = makeAddr("receiver");
+    address internal stranger = makeAddr("stranger");
 
     function setUp() public {
         if (block.chainid != ARC_MAINNET) vm.skip(true);
@@ -34,23 +36,25 @@ contract MorphoArcMainnetForkTest is Test {
             USDC,
             "ForYield Arc USDC",
             "fyUSDC",
-            makeAddr("owner"),
+            owner,
             makeAddr("guardian"),
             makeAddr("recovery"),
+            true, // as on mainnet: deposits reserved to the owner
             GALAXY_USDC
         );
         // Credit 10,000 USDC: on Arc the ERC-20 balance is the native balance, scaled by 1e12.
-        vm.deal(alice, 10_000e18);
+        vm.deal(owner, 10_000e18);
+        vm.deal(stranger, 10_000e18);
     }
 
     function test_fork_depositSuppliesGalaxyAndRedeemReturnsUsdc() public {
         assertEq(GALAXY_USDC.maxDeposit(address(vault)), 0); // Vault V2 trait, never relied upon
-        assertEq(USDC.balanceOf(alice), 10_000e6);
+        assertEq(USDC.balanceOf(owner), 10_000e6);
 
-        // Alice keeps a little USDC back: on Arc the same balance also pays her gas.
-        vm.startPrank(alice);
+        // The owner keeps a little USDC back: on Arc the same balance also pays its gas.
+        vm.startPrank(owner);
         USDC.approve(address(vault), 9_000e6);
-        uint256 shares = vault.deposit(9_000e6, alice);
+        uint256 shares = vault.deposit(9_000e6, owner);
         vm.stopPrank();
 
         assertGt(GALAXY_USDC.balanceOf(address(vault)), 0);
@@ -64,11 +68,20 @@ contract MorphoArcMainnetForkTest is Test {
         uint256 valueAfterYear = vault.totalAssets();
         assertGt(valueAfterYear, 9_000e6); // real Morpho interest, not a mock
 
-        vm.prank(alice);
-        uint256 out = vault.redeem(shares, receiver, alice);
+        vm.prank(owner);
+        uint256 out = vault.redeem(shares, receiver, owner);
         assertEq(USDC.balanceOf(receiver), out);
         assertLe(out, valueAfterYear); // rounding stays in the vault's favor
         assertApproxEqAbs(out, valueAfterYear, 2);
+        assertEq(vault.totalSupply(), 0);
+    }
+
+    function test_fork_strangerCannotDeposit() public {
+        vm.startPrank(stranger);
+        USDC.approve(address(vault), 1_000e6);
+        vm.expectRevert(abi.encodeWithSelector(YieldVault.DepositNotAllowed.selector, stranger));
+        vault.deposit(1_000e6, owner);
+        vm.stopPrank();
         assertEq(vault.totalSupply(), 0);
     }
 }

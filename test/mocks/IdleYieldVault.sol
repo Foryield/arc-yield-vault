@@ -6,7 +6,15 @@ import {YieldVault} from "../../src/YieldVault.sol";
 
 /// @notice Concrete YieldVault with no venue: assets stay idle. Exercises the base contract alone.
 contract IdleYieldVault is YieldVault {
-    constructor(IERC20 asset_, address owner_, address guardian_, address recovery_)
-        YieldVault(asset_, "Idle Yield Vault", "iyv", owner_, guardian_, recovery_)
+    constructor(
+        IERC20 asset_,
+        address owner_,
+        address guardian_,
+        address recovery_,
+        bool ownerOnlyDeposits_
+    )
+        YieldVault(
+            asset_, "Idle Yield Vault", "iyv", owner_, guardian_, recovery_, ownerOnlyDeposits_
+        )
     {}
 }

@@ -30,6 +30,7 @@ contract MorphoYieldVaultFuzzTest is Test {
             makeAddr("owner"),
             makeAddr("guardian"),
             makeAddr("recovery"),
+            false,
             IERC4626(address(morpho))
         );
     }

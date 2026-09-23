@@ -31,8 +31,9 @@ contract MorphoYieldVault is YieldVault {
         address owner_,
         address guardian_,
         address recovery_,
+        bool ownerOnlyDeposits_,
         IERC4626 morphoVault_
-    ) YieldVault(asset_, name_, symbol_, owner_, guardian_, recovery_) {
+    ) YieldVault(asset_, name_, symbol_, owner_, guardian_, recovery_, ownerOnlyDeposits_) {
         if (address(morphoVault_) == address(0)) revert ZeroAddress();
         address targetAsset = morphoVault_.asset();
         if (targetAsset != address(asset_)) revert AssetMismatch(address(asset_), targetAsset);

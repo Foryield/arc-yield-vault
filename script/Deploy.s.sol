@@ -30,10 +30,10 @@ contract Deploy is Script {
 
         vm.startBroadcast(owner);
         usdcVault = new MorphoYieldVault(
-            USDC, "ForYield Arc USDC", "fyUSDC", owner, guardian, recovery, usdcTarget
+            USDC, "ForYield Arc USDC", "fyUSDC", owner, guardian, recovery, false, usdcTarget
         );
         eurcVault = new MorphoYieldVault(
-            EURC, "ForYield Arc EURC", "fyEURC", owner, guardian, recovery, eurcTarget
+            EURC, "ForYield Arc EURC", "fyEURC", owner, guardian, recovery, false, eurcTarget
         );
         vm.stopBroadcast();
     }

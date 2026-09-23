@@ -20,12 +20,19 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 ///      - owner (two-step transfer): configuration, unpause;
 ///      - guardian: pause, evacuation;
 ///      - RECOVERY_ADDRESS (immutable): the only place the evacuation can send funds.
+///
+///      OWNER_ONLY_DEPOSITS, fixed at deployment, reserves deposits to the owner: open for a
+///      public demonstration, closed for an instance that only runs the operator's own capital.
 abstract contract YieldVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     /// @notice Sole destination of `emergencyWithdraw`. Immutable, so a compromised owner or
     ///         guardian key cannot redirect an evacuation.
     address public immutable RECOVERY_ADDRESS;
+
+    /// @notice When set, only the current owner can deposit or mint, and only to itself. Exits stay
+    ///         open to any share holder. Immutable, so no key can open a restricted vault later.
+    bool public immutable OWNER_ONLY_DEPOSITS;
 
     /// @notice Can pause the vault and trigger the evacuation. Cannot unpause or move funds elsewhere.
     address public guardian;
@@ -41,6 +48,7 @@ abstract contract YieldVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard
     error NotOwnerOrGuardian();
     error VaultTerminated();
     error RenounceDisabled();
+    error DepositNotAllowed(address caller);
 
     modifier onlyOwnerOrGuardian() {
         if (msg.sender != owner() && msg.sender != guardian) revert NotOwnerOrGuardian();
@@ -53,7 +61,8 @@ abstract contract YieldVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard
         string memory symbol_,
         address owner_,
         address guardian_,
-        address recovery_
+        address recovery_,
+        bool ownerOnlyDeposits_
     ) ERC4626(asset_) ERC20(name_, symbol_) Ownable(owner_) {
         if (guardian_ == address(0) || recovery_ == address(0)) {
             revert ZeroAddress();
@@ -62,6 +71,7 @@ abstract contract YieldVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard
             revert RoleCollision();
         }
         RECOVERY_ADDRESS = recovery_;
+        OWNER_ONLY_DEPOSITS = ownerOnlyDeposits_;
         guardian = guardian_;
         emit GuardianUpdated(address(0), guardian_);
     }
@@ -69,13 +79,14 @@ abstract contract YieldVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard
     // ─── ERC-4626 ─────────────────────────────────────────────────────
 
     /// @dev Pausing closes every entry and exit: OpenZeppelin's deposit/mint/withdraw/redeem
-    ///      revert when the matching max* returns 0.
+    ///      revert when the matching max* returns 0. A restricted vault also closes entries to any
+    ///      receiver other than the owner.
     function maxDeposit(address receiver) public view virtual override returns (uint256) {
-        return paused() ? 0 : super.maxDeposit(receiver);
+        return _entryClosed(receiver) ? 0 : super.maxDeposit(receiver);
     }
 
     function maxMint(address receiver) public view virtual override returns (uint256) {
-        return paused() ? 0 : super.maxMint(receiver);
+        return _entryClosed(receiver) ? 0 : super.maxMint(receiver);
     }
 
     function maxWithdraw(address holder) public view virtual override returns (uint256) {
@@ -92,12 +103,19 @@ abstract contract YieldVault is ERC4626, Ownable2Step, Pausable, ReentrancyGuard
         return 6;
     }
 
+    function _entryClosed(address receiver) private view returns (bool) {
+        return paused() || (OWNER_ONLY_DEPOSITS && receiver != owner());
+    }
+
+    /// @dev OpenZeppelin checks max* against the receiver only; a restricted vault also refuses
+    ///      any caller other than the owner, so nobody can fund the owner's position either.
     function _deposit(address caller, address receiver, uint256 assets, uint256 shares)
         internal
         virtual
         override
         nonReentrant
     {
+        if (OWNER_ONLY_DEPOSITS && caller != owner()) revert DepositNotAllowed(caller);
         super._deposit(caller, receiver, assets, shares);
     }
 

@@ -25,7 +25,7 @@ contract YieldVaultTest is Test {
 
     function setUp() public {
         usdc = new MockERC20("USD Coin", "USDC", 6);
-        vault = new IdleYieldVault(usdc, owner, guardian, recovery);
+        vault = new IdleYieldVault(usdc, owner, guardian, recovery, false);
         usdc.mint(alice, 1_000_000e6);
         usdc.mint(mallory, 1_000_000e6);
     }
@@ -48,6 +48,7 @@ contract YieldVaultTest is Test {
         assertEq(vault.RECOVERY_ADDRESS(), recovery);
         assertEq(vault.asset(), address(usdc));
         assertFalse(vault.terminated());
+        assertFalse(vault.OWNER_ONLY_DEPOSITS());
     }
 
     function test_constructor_sharesCarryDecimalsOffset() public view {
@@ -56,26 +57,26 @@ contract YieldVaultTest is Test {
 
     function test_constructor_revertsOnZeroOwner() public {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
-        new IdleYieldVault(usdc, address(0), guardian, recovery);
+        new IdleYieldVault(usdc, address(0), guardian, recovery, false);
     }
 
     function test_constructor_revertsOnZeroGuardian() public {
         vm.expectRevert(YieldVault.ZeroAddress.selector);
-        new IdleYieldVault(usdc, owner, address(0), recovery);
+        new IdleYieldVault(usdc, owner, address(0), recovery, false);
     }
 
     function test_constructor_revertsOnZeroRecovery() public {
         vm.expectRevert(YieldVault.ZeroAddress.selector);
-        new IdleYieldVault(usdc, owner, guardian, address(0));
+        new IdleYieldVault(usdc, owner, guardian, address(0), false);
     }
 
     function test_constructor_revertsOnRoleCollision() public {
         vm.expectRevert(YieldVault.RoleCollision.selector);
-        new IdleYieldVault(usdc, owner, owner, recovery);
+        new IdleYieldVault(usdc, owner, owner, recovery, false);
         vm.expectRevert(YieldVault.RoleCollision.selector);
-        new IdleYieldVault(usdc, owner, guardian, owner);
+        new IdleYieldVault(usdc, owner, guardian, owner, false);
         vm.expectRevert(YieldVault.RoleCollision.selector);
-        new IdleYieldVault(usdc, owner, guardian, guardian);
+        new IdleYieldVault(usdc, owner, guardian, guardian, false);
     }
 
     // ─── Deposit and withdrawal ───────────────────────────────────────
@@ -155,6 +156,100 @@ contract YieldVaultTest is Test {
         // The victim keeps at least 99.99 % of the deposit; the attacker loses most of the donation.
         assertGe(victimOut, 10_000e6 * 9_999 / 10_000);
         assertLt(attackerOut, 10_000e6 + 1);
+    }
+
+    // ─── Owner-only deposits ──────────────────────────────────────────
+
+    function _restrictedVault() internal returns (IdleYieldVault restricted) {
+        restricted = new IdleYieldVault(usdc, owner, guardian, recovery, true);
+        usdc.mint(owner, 1_000e6);
+        vm.prank(owner);
+        usdc.approve(address(restricted), type(uint256).max);
+        vm.prank(mallory);
+        usdc.approve(address(restricted), type(uint256).max);
+    }
+
+    function test_ownerOnly_maxReportsZeroForAnyOtherReceiver() public {
+        IdleYieldVault restricted = _restrictedVault();
+        assertTrue(restricted.OWNER_ONLY_DEPOSITS());
+        assertEq(restricted.maxDeposit(owner), type(uint256).max);
+        assertEq(restricted.maxMint(owner), type(uint256).max);
+        assertEq(restricted.maxDeposit(mallory), 0);
+        assertEq(restricted.maxMint(mallory), 0);
+    }
+
+    function test_ownerOnly_ownerDepositsAndRedeemsToAnotherAddress() public {
+        IdleYieldVault restricted = _restrictedVault();
+        vm.prank(owner);
+        uint256 shares = restricted.deposit(100e6, owner);
+        vm.prank(owner);
+        uint256 minted = 50e6 * 1e6;
+        assertEq(restricted.mint(minted, owner), 50e6);
+        shares += minted;
+        assertEq(restricted.balanceOf(owner), shares);
+
+        // Exits are not restricted: the owner can be paid anywhere.
+        vm.prank(owner);
+        restricted.redeem(shares, carol, owner);
+        assertEq(usdc.balanceOf(carol), 150e6);
+    }
+
+    function test_ownerOnly_strangerCannotDepositForHimself() public {
+        IdleYieldVault restricted = _restrictedVault();
+        vm.prank(mallory);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxDeposit.selector, mallory, 100e6, 0)
+        );
+        restricted.deposit(100e6, mallory);
+        vm.prank(mallory);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxMint.selector, mallory, 1e12, 0)
+        );
+        restricted.mint(1e12, mallory);
+    }
+
+    function test_ownerOnly_strangerCannotDepositForTheOwner() public {
+        IdleYieldVault restricted = _restrictedVault();
+        vm.prank(mallory);
+        vm.expectRevert(abi.encodeWithSelector(YieldVault.DepositNotAllowed.selector, mallory));
+        restricted.deposit(100e6, owner);
+        vm.prank(mallory);
+        vm.expectRevert(abi.encodeWithSelector(YieldVault.DepositNotAllowed.selector, mallory));
+        restricted.mint(1e12, owner);
+        assertEq(restricted.totalSupply(), 0);
+        assertEq(usdc.balanceOf(mallory), 1_000_000e6);
+    }
+
+    function test_ownerOnly_ownerCannotMintSharesToAnotherAddress() public {
+        IdleYieldVault restricted = _restrictedVault();
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxDeposit.selector, carol, 100e6, 0)
+        );
+        restricted.deposit(100e6, carol);
+    }
+
+    function test_ownerOnly_followsOwnershipTransfer() public {
+        IdleYieldVault restricted = _restrictedVault();
+        address nextOwner = makeAddr("nextOwner");
+        vm.prank(owner);
+        restricted.transferOwnership(nextOwner);
+        vm.prank(nextOwner);
+        restricted.acceptOwnership();
+
+        assertEq(restricted.maxDeposit(owner), 0);
+        assertEq(restricted.maxDeposit(nextOwner), type(uint256).max);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(YieldVault.DepositNotAllowed.selector, owner));
+        restricted.deposit(100e6, nextOwner);
+    }
+
+    function test_ownerOnly_pauseStillClosesTheOwner() public {
+        IdleYieldVault restricted = _restrictedVault();
+        vm.prank(guardian);
+        restricted.pause();
+        assertEq(restricted.maxDeposit(owner), 0);
+        assertEq(restricted.maxMint(owner), 0);
     }
 
     // ─── Pause ────────────────────────────────────────────────────────

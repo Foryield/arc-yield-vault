@@ -34,7 +34,7 @@ contract MorphoYieldVaultTest is Test {
 
     function _newVault(IERC4626 target) internal returns (MorphoYieldVault) {
         return new MorphoYieldVault(
-            usdc, "ForYield Arc USDC", "fyUSDC", owner, guardian, recovery, target
+            usdc, "ForYield Arc USDC", "fyUSDC", owner, guardian, recovery, false, target
         );
     }
 
