@@ -72,6 +72,11 @@ is in [docs/demo/fil-rouge-testeur.md](./docs/demo/fil-rouge-testeur.md) (French
   favors the vault.
 - **Morpho Vault V2's `max*` functions always return 0** by design (its access gates cannot
   be evaluated revert-free), so this vault never reads them.
+- **Owner-only deposits.** `OWNER_ONLY_DEPOSITS`, fixed at deployment, reserves entries to
+  the owner: `maxDeposit` and `maxMint` return 0 for any other receiver, and a deposit from any
+  other caller reverts with `DepositNotAllowed`. Exits stay open to share holders. The testnet
+  instances are open; a mainnet instance is always restricted, so it only ever holds
+  ForYield's own capital.
 - **Arc specifics.** USDC is both Arc's native gas token (18 decimals) and an ERC-20 at
   `0x3600…0000` (6 decimals) over the same balance. The vault only uses the ERC-20 interface.
 
@@ -79,7 +84,8 @@ is in [docs/demo/fil-rouge-testeur.md](./docs/demo/fil-rouge-testeur.md) (French
 
 | Function | Access | Description |
 |---|---|---|
-| `deposit` / `mint` / `withdraw` / `redeem` | anyone (ERC-4626) | Standard ERC-4626 entry and exit points; supply to and recall from Morpho happen inside. |
+| `deposit` / `mint` | anyone (ERC-4626), or the owner only when `OWNER_ONLY_DEPOSITS` | Standard ERC-4626 entry points; the supply to Morpho happens inside. |
+| `withdraw` / `redeem` | any share holder (ERC-4626) | Standard ERC-4626 exit points; the recall from Morpho happens inside. |
 | `totalAssets()` | view | Morpho position plus idle assets. |
 | `pause()` | owner or guardian | Closes every entry and exit (`max*` return 0). |
 | `unpause()` | owner | Reopens the vault, unless it was terminated. |
@@ -125,7 +131,8 @@ forge test
 - `test/MorphoYieldVault.fuzz.t.sol`: solvency and fairness under random deposits, yield
   and withdrawals.
 - `test/fork/MorphoArcMainnet.fork.t.sol`: the vault against the real Galaxy USDC Morpho
-  Vault V2 on a local fork of Arc mainnet, with a year of real interest. It needs
+  Vault V2 on a local fork of Arc mainnet, configured as on mainnet (owner-only deposits), with
+  a year of real interest and a refused third-party deposit. It needs
   [Arc Foundry](https://github.com/circlefin/arc-foundry), which implements Arc's USDC
   precompile, and `--isolate`, because a Morpho Vault V2 freezes its valuation for the rest of
   a transaction:
@@ -138,9 +145,15 @@ forge test
 CI enforces formatting, the test suite, 95 % line and branch coverage of `src/` (currently
 100 %), a clean Slither run, and a type-checked build of the web demo. The mainnet fork test runs weekly in a separate workflow.
 
-## Deploy (testnet)
+## Deploy
 
 Scripts run with Arc Foundry (`arc-forge`) and sign with Foundry keystores.
+[`script/Deploy.s.sol`](./script/Deploy.s.sol) deploys the USDC vault, and the EURC vault when
+`EURC_MORPHO_TARGET` is set, from a deployment key that holds no role: the constructor sets
+owner, guardian and recovery. It refuses a Morpho target with any access gate set, and on Arc
+mainnet it always restricts deposits to the owner.
+
+### Testnet
 
 ```bash
 # 1. A Morpho Vault V2 target per asset (USDC shown)
@@ -149,8 +162,8 @@ ASSET=0x3600000000000000000000000000000000000000 OWNER=<owner> script/deploy-mor
 # 2. Both vaults, same bytecode
 OWNER=<owner> GUARDIAN=<guardian> RECOVERY=<recovery> \
 USDC_MORPHO_TARGET=<usdc target> EURC_MORPHO_TARGET=<eurc target> \
-arc-forge script script/Deploy.s.sol --rpc-url arc_testnet --account <owner keystore> \
-  --sender <owner> --broadcast --verify --verifier blockscout \
+arc-forge script script/Deploy.s.sol --rpc-url arc_testnet --account <deployer keystore> \
+  --sender <deployer> --broadcast --verify --verifier blockscout \
   --verifier-url https://explorer.testnet.arc.io/api/
 
 # 3. Deposit and redeem half, from a depositor
@@ -159,15 +172,49 @@ arc-forge script script/DemoFlow.s.sol --rpc-url arc_testnet --account <deposito
   --sender <depositor> --broadcast
 ```
 
-## CCTP v2: USDC from Base Sepolia to Arc
+### Mainnet
+
+Morpho runs curated Vault V2 instances on Arc mainnet, so no target is deployed. The owner is
+a custody wallet that signs raw transactions; the deployment key only needs a little USDC for
+gas.
+
+```bash
+# 1. Vaults (EURC optional), owner-only deposits
+OWNER=<custody wallet> GUARDIAN=<guardian> RECOVERY=<recovery> \
+USDC_MORPHO_TARGET=<usdc target> [EURC_MORPHO_TARGET=<eurc target>] \
+arc-forge script script/Deploy.s.sol --rpc-url arc --account <deployer keystore> \
+  --sender <deployer> --broadcast
+
+# 2. Source verification: the Blockscout API of explorer.arc.io sits behind a bot challenge,
+#    so publish on Sourcify, then upload the standard JSON input on explorer.arc.io by hand
+ARGS=$(cast abi-encode "constructor(address,string,string,address,address,address,bool,address)" \
+  0x3600000000000000000000000000000000000000 "ForYield Arc USDC" fyUSDC \
+  <owner> <guardian> <recovery> true <usdc target>)
+arc-forge verify-contract <vault> src/MorphoYieldVault.sol:MorphoYieldVault --chain 5042 \
+  --verifier sourcify --constructor-args "$ARGS"
+arc-forge verify-contract <vault> src/MorphoYieldVault.sol:MorphoYieldVault --chain 5042 \
+  --constructor-args "$ARGS" --show-standard-json-input > standard-input.json
+
+# 3. Calldata for the three custody signatures: approve, deposit, then redeem
+cast calldata "approve(address,uint256)" <vault> <amount>          # to the asset
+cast calldata "deposit(uint256,address)" <amount> <custody wallet>  # to the vault
+cast calldata "redeem(uint256,address,address)" <shares> <custody wallet> <custody wallet>
+```
+
+## CCTP v2: USDC from Base to Arc
 
 [`scripts/cctp/base-sepolia-to-arc.ts`](./scripts/cctp/base-sepolia-to-arc.ts) approves the
-exact amount, burns it on Base Sepolia with `depositForBurn` to Arc (CCTP domain 26, Fast
-Transfer), waits for Circle's attestation and relays `receiveMessage` on Arc. It runs on
-Node 24 with no dependency and signs through `cast` and a keystore.
+exact amount, burns it on Base with `depositForBurn` to Arc (CCTP domain 26, Fast Transfer),
+waits for Circle's attestation and relays `receiveMessage` on Arc. It runs on Node 24 with no
+dependency and signs through `cast` and a keystore. Base Sepolia to Arc testnet by default;
+`NETWORK=mainnet` moves real USDC from Base to Arc mainnet. The keystore relays the mint on
+Arc, so it needs a little USDC there for gas; the recipient can be any address.
 
 ```bash
 SENDER=<address> node scripts/cctp/base-sepolia-to-arc.ts
+# mainnet, minting to the custody wallet
+NETWORK=mainnet SENDER=<address> RECIPIENT=<custody wallet> AMOUNT=<units> \
+  node scripts/cctp/base-sepolia-to-arc.ts
 # resume an interrupted transfer from its burn
 SENDER=<address> BURN_TX=<burn tx hash> node scripts/cctp/base-sepolia-to-arc.ts
 ```
