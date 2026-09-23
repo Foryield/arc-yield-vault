@@ -1,16 +1,20 @@
-// Moves USDC from Base Sepolia to Arc testnet with Circle's CCTP v2 (Fast Transfer).
+// Moves USDC from Base to Arc with Circle's CCTP v2 (Fast Transfer): Base Sepolia to Arc testnet
+// by default, Base to Arc mainnet with NETWORK=mainnet.
 //
-//   1. Base Sepolia: approve TokenMessengerV2 for the exact amount.
-//   2. Base Sepolia: depositForBurn to Arc (CCTP domain 26); the USDC is burned.
-//   3. Circle's attestation service (Iris, sandbox) signs the burn message.
-//   4. Arc testnet: MessageTransmitterV2.receiveMessage mints native USDC to the recipient.
+//   1. Base: approve TokenMessengerV2 for the exact amount.
+//   2. Base: depositForBurn to Arc (CCTP domain 26); the USDC is burned.
+//   3. Circle's attestation service (Iris) signs the burn message.
+//   4. Arc: MessageTransmitterV2.receiveMessage mints native USDC to the recipient.
 //
 // Signing goes through Foundry's `cast` and an encrypted keystore: no private key ever reaches
 // this process or its environment. Amounts are bigint base units (USDC has 6 decimals).
 //
 // Usage (Node 24+, no dependency):
-//   SENDER=0x… [RECIPIENT=0x…] [AMOUNT=1000000] [ACCOUNT=arc-depositor] \
+//   SENDER=0x… [RECIPIENT=0x…] [AMOUNT=1000000] [ACCOUNT=arc-depositor] [NETWORK=mainnet] \
 //     node scripts/cctp/base-sepolia-to-arc.ts
+//
+// The same keystore signs the burn on Base and relays the mint on Arc: on Arc it needs a little
+// USDC for gas, since the recipient may be a custody wallet that cannot sign through cast.
 //
 // Resuming after an interruption (e.g. an attestation outage): a burn stays mintable once
 // Circle attests it, so pass its hash to skip straight to steps 3 and 4:
@@ -18,14 +22,38 @@
 
 import { execFileSync } from "node:child_process";
 
-const BASE_SEPOLIA = { chainId: 84532n, domain: 6, rpc: "https://sepolia.base.org" };
-const ARC_TESTNET = { chainId: 5042002n, domain: 26, rpc: "https://rpc.testnet.arc.io" };
-// CCTP v2 contracts share their addresses across both testnets (deterministic deployment).
-const TOKEN_MESSENGER_V2 = "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA";
-const MESSAGE_TRANSMITTER_V2 = "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275";
-const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+// CCTP v2 contracts share their addresses across the chains of one network (deterministic
+// deployment). Mainnet addresses checked on chain on 2026-09-23 (localDomain 6 on Base, 26 on Arc).
+const NETWORKS = {
+  testnet: {
+    base: { name: "Base Sepolia", chainId: 84532n, domain: 6, rpc: "https://sepolia.base.org" },
+    arc: { name: "Arc testnet", chainId: 5042002n, domain: 26, rpc: "https://rpc.testnet.arc.io" },
+    tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    usdcBase: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    iris: "https://iris-api-sandbox.circle.com",
+  },
+  mainnet: {
+    base: { name: "Base", chainId: 8453n, domain: 6, rpc: "https://mainnet.base.org" },
+    arc: { name: "Arc mainnet", chainId: 5042n, domain: 26, rpc: "https://rpc.mainnet.arc.io" },
+    tokenMessenger: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    messageTransmitter: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64",
+    usdcBase: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    iris: "https://iris-api.circle.com",
+  },
+} as const;
+const networkName = process.env.NETWORK ?? "testnet";
+if (networkName !== "testnet" && networkName !== "mainnet") {
+  throw new Error("NETWORK must be testnet or mainnet");
+}
+const NETWORK = NETWORKS[networkName];
+const BASE = NETWORK.base;
+const ARC = NETWORK.arc;
+const TOKEN_MESSENGER_V2 = NETWORK.tokenMessenger;
+const MESSAGE_TRANSMITTER_V2 = NETWORK.messageTransmitter;
+const USDC_BASE = NETWORK.usdcBase;
 const USDC_ARC = "0x3600000000000000000000000000000000000000";
-const IRIS = "https://iris-api-sandbox.circle.com";
+const IRIS = NETWORK.iris;
 const FAST_FINALITY = 1000; // Fast Transfer; 2000 would wait for Base finality at no fee.
 const POLL_INTERVAL_MS = 5_000;
 const POLL_TIMEOUT_MS = 30 * 60_000;
@@ -76,12 +104,12 @@ function formatUsdc(units: bigint): string {
 
 async function fastTransferMaxFee(): Promise<bigint> {
   const response = await fetch(
-    `${IRIS}/v2/burn/USDC/fees/${BASE_SEPOLIA.domain}/${ARC_TESTNET.domain}`,
+    `${IRIS}/v2/burn/USDC/fees/${BASE.domain}/${ARC.domain}`,
   );
   if (!response.ok) throw new Error(`fee lookup failed: HTTP ${response.status}`);
   const tiers: { finalityThreshold: number; minimumFee: number }[] = await response.json();
   const fast = tiers.find((tier) => tier.finalityThreshold === FAST_FINALITY);
-  if (!fast) throw new Error("no Fast Transfer fee tier for Base Sepolia to Arc");
+  if (!fast) throw new Error(`no Fast Transfer fee tier for ${BASE.name} to ${ARC.name}`);
   // minimumFee is in basis points (e.g. 1.3). Scale to hundredths of a basis point to stay in
   // integers, then round the fee up so the burn is never rejected for an underpaid fee.
   const hundredthsOfBps = BigInt(Math.round(fast.minimumFee * 100));
@@ -89,7 +117,7 @@ async function fastTransferMaxFee(): Promise<bigint> {
 }
 
 async function waitForAttestation(burnHash: string): Promise<{ message: string; attestation: string }> {
-  const url = `${IRIS}/v2/messages/${BASE_SEPOLIA.domain}?transactionHash=${burnHash}`;
+  const url = `${IRIS}/v2/messages/${BASE.domain}?transactionHash=${burnHash}`;
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const response = await fetch(url);
@@ -107,24 +135,24 @@ async function waitForAttestation(burnHash: string): Promise<{ message: string; 
 }
 
 async function main(): Promise<void> {
-  for (const chain of [BASE_SEPOLIA, ARC_TESTNET]) {
+  for (const chain of [BASE, ARC]) {
     const chainId = BigInt(cast(["chain-id", "--rpc-url", chain.rpc]));
     if (chainId !== chain.chainId) throw new Error(`${chain.rpc} is chain ${chainId}, not ${chain.chainId}`);
   }
 
-  const arcBefore = read(ARC_TESTNET.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
+  const arcBefore = read(ARC.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
   const started = Date.now();
   const burn = resumeBurnTx ? { burnHash: resumeBurnTx } : await approveAndBurn();
   console.log(`Burned: ${burn.burnHash}. Waiting for Circle's attestation…`);
 
   const { message, attestation } = await waitForAttestation(burn.burnHash);
-  const mintHash = send(ARC_TESTNET.rpc, MESSAGE_TRANSMITTER_V2, "receiveMessage(bytes,bytes)", message, attestation);
-  const arcAfter = read(ARC_TESTNET.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
+  const mintHash = send(ARC.rpc, MESSAGE_TRANSMITTER_V2, "receiveMessage(bytes,bytes)", message, attestation);
+  const arcAfter = read(ARC.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
 
   // The recipient pays the mint's gas in USDC when it also relays it, so the net change
   // understates the minted amount by that gas; the Mint event on Arc carries the exact figure.
   console.log(JSON.stringify({
-    route: "Base Sepolia (domain 6) -> Arc testnet (domain 26)",
+    route: `${BASE.name} (domain ${BASE.domain}) -> ${ARC.name} (domain ${ARC.domain})`,
     ...burn,
     mintTx: mintHash,
     recipient,
@@ -134,28 +162,28 @@ async function main(): Promise<void> {
 }
 
 async function approveAndBurn() {
-  const balance = read(BASE_SEPOLIA.rpc, USDC_BASE_SEPOLIA, "balanceOf(address)(uint256)", sender);
-  if (balance < amount) throw new Error(`sender holds ${formatUsdc(balance)} on Base Sepolia`);
+  const balance = read(BASE.rpc, USDC_BASE, "balanceOf(address)(uint256)", sender);
+  if (balance < amount) throw new Error(`sender holds ${formatUsdc(balance)} on ${BASE.name}`);
   const maxFee = await fastTransferMaxFee();
-  console.log(`Burning ${formatUsdc(amount)} on Base Sepolia, max fee ${formatUsdc(maxFee)}`);
+  console.log(`Burning ${formatUsdc(amount)} on ${BASE.name}, max fee ${formatUsdc(maxFee)}`);
 
   const approveHash = send(
-    BASE_SEPOLIA.rpc, USDC_BASE_SEPOLIA, "approve(address,uint256)", TOKEN_MESSENGER_V2, amount.toString(),
+    BASE.rpc, USDC_BASE, "approve(address,uint256)", TOKEN_MESSENGER_V2, amount.toString(),
   );
   const burnHash = send(
-    BASE_SEPOLIA.rpc,
+    BASE.rpc,
     TOKEN_MESSENGER_V2,
     "depositForBurn(uint256,uint32,bytes32,address,bytes32,uint256,uint32)",
     amount.toString(),
-    String(ARC_TESTNET.domain),
+    String(ARC.domain),
     toBytes32(recipient),
-    USDC_BASE_SEPOLIA,
+    USDC_BASE,
     toBytes32("0x0000000000000000000000000000000000000000"), // any caller may relay the mint
     maxFee.toString(),
     String(FAST_FINALITY),
   );
   const allowanceLeft = read(
-    BASE_SEPOLIA.rpc, USDC_BASE_SEPOLIA, "allowance(address,address)(uint256)", sender, TOKEN_MESSENGER_V2,
+    BASE.rpc, USDC_BASE, "allowance(address,address)(uint256)", sender, TOKEN_MESSENGER_V2,
   );
   return {
     amount: formatUsdc(amount),
