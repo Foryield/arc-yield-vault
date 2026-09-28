@@ -1,0 +1,76 @@
+{
+  "permissions": {
+    "defaultMode": "plan",
+    "allow": [
+      "Bash(forge build:*)",
+      "Bash(forge fmt:*)",
+      "Bash(forge coverage:*)",
+      "Bash(forge clean:*)",
+      "Bash(arc-forge build:*)",
+      "Bash(arc-forge test:*)",
+      "Bash(cast call:*)",
+      "Bash(cast calldata:*)",
+      "Bash(cast code:*)",
+      "Bash(cast chain-id:*)",
+      "Bash(cast block-number:*)",
+      "Bash(cast balance:*)",
+      "Bash(cast receipt:*)",
+      "Bash(cast tx:*)",
+      "Bash(cast keccak:*)",
+      "Bash(cast abi-encode:*)",
+      "Bash(cast to-unit:*)",
+      "Bash(cast from-wei:*)",
+      "Bash(slither:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(cast nonce:*)",
+      "Bash(cast compute-address:*)",
+      "Bash(cast sig:*)",
+      "Bash(cast to-hex:*)",
+      "Bash(cast to-check-sum-address:*)",
+      "Bash(cast gas-price:*)",
+      "Bash(cast block:*)",
+      "Bash(forge test -vv:*)",
+      "Bash(forge test --match:*)"
+    ],
+    "ask": [
+      "Bash(arc-forge script:*)",
+      "Bash(forge script:*)",
+      "Bash(arc-anvil:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npx tsx:*)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Bash(bash:*)",
+      "Bash(forge test:*)"
+    ],
+    "deny": [
+      "Bash(cast send:*)",
+      "Bash(cast publish:*)",
+      "Bash(cast mktx:*)",
+      "Bash(cast wallet:*)",
+      "Read(./.env)",
+      "Read(**/*.keystore)",
+      "Read(~/.foundry/keystores/**)",
+      "Read(./.env.local)",
+      "Read(./.env.mainnet)",
+      "Read(**/keystores/**)",
+      "Bash(forge test --ffi:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-mainnet-broadcast.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

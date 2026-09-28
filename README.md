@@ -130,6 +130,14 @@ forge test
   refused deposits, limited liquidity, short payments).
 - `test/MorphoYieldVault.fuzz.t.sol`: solvency and fairness under random deposits, yield
   and withdrawals.
+- `test/script/Deploy.t.sol`: every guard of the deployment script (expected chain, deployer
+  without a role, pinned mainnet targets, gates set, exit gates not abdicated), on mocks etched
+  at the real addresses.
+- `test/fork/DeployMainnet.fork.t.sol`: dress rehearsal on a fork of Arc mainnet through the
+  deployment script: both vaults as configured on mainnet, the owner's 100 USDC round trip, the
+  guardian's pause and evacuation to the recovery address against the real Morpho Vault V2,
+  refused third-party entries, and the Galaxy targets' abdicated exit gates. `OWNER`,
+  `GUARDIAN` and `RECOVERY` may be exported to rehearse with the real role addresses.
 - `test/fork/MorphoArcMainnet.fork.t.sol`: the vault against the real Galaxy USDC Morpho
   Vault V2 on a local fork of Arc mainnet, configured as on mainnet (owner-only deposits), with
   a year of real interest and a refused third-party deposit. It needs
@@ -138,20 +146,24 @@ forge test
   a transaction:
 
   ```bash
-  arc-forge test --isolate --match-path test/fork/MorphoArcMainnet.fork.t.sol \
-    --fork-url https://rpc.mainnet.arc.io
+  arc-forge test --isolate --match-path 'test/fork/*' --fork-url https://rpc.mainnet.arc.io
   ```
 
 CI enforces formatting, the test suite, 95 % line and branch coverage of `src/` (currently
-100 %), a clean Slither run, and a type-checked build of the web demo. The mainnet fork test runs weekly in a separate workflow.
+100 %), a clean Slither run, and a type-checked build of the web demo. The mainnet fork tests
+run weekly in a separate workflow.
 
 ## Deploy
 
 Scripts run with Arc Foundry (`arc-forge`) and sign with Foundry keystores.
 [`script/Deploy.s.sol`](./script/Deploy.s.sol) deploys the USDC vault, and the EURC vault when
 `EURC_MORPHO_TARGET` is set, from a deployment key that holds no role: the constructor sets
-owner, guardian and recovery. It refuses a Morpho target with any access gate set, and on Arc
-mainnet it always restricts deposits to the owner.
+owner, guardian and recovery. It refuses to run on any chain but `EXPECTED_CHAIN_ID`, from a key
+that holds a role, or against a Morpho target with any access gate set. On Arc mainnet it always
+restricts deposits to the owner, deploys both vaults, accepts only the two pinned Galaxy targets
+(several test vaults share their names), and requires the three gates that could block an exit
+to be abdicated for good, so no curator can ever lock the vaults' exits after a deposit. It
+prints every parameter and the ABI-encoded constructor arguments before broadcasting.
 
 ### Testnet
 
@@ -160,7 +172,7 @@ mainnet it always restricts deposits to the owner.
 ASSET=0x3600000000000000000000000000000000000000 OWNER=<owner> script/deploy-morpho-target.sh
 
 # 2. Both vaults, same bytecode
-OWNER=<owner> GUARDIAN=<guardian> RECOVERY=<recovery> \
+EXPECTED_CHAIN_ID=5042002 OWNER=<owner> GUARDIAN=<guardian> RECOVERY=<recovery> \
 USDC_MORPHO_TARGET=<usdc target> EURC_MORPHO_TARGET=<eurc target> \
 arc-forge script script/Deploy.s.sol --rpc-url arc_testnet --account <deployer keystore> \
   --sender <deployer> --broadcast --verify --verifier blockscout \
@@ -174,16 +186,30 @@ arc-forge script script/DemoFlow.s.sol --rpc-url arc_testnet --account <deposito
 
 ### Mainnet
 
-Morpho runs curated Vault V2 instances on Arc mainnet, so no target is deployed. The owner is
-a custody wallet that signs raw transactions; the deployment key only needs a little USDC for
-gas.
+Morpho runs curated Vault V2 instances on Arc mainnet, so no target is deployed. The owner
+key is held by ForYield's management; the deployment key only needs a little USDC for gas (about
+5.5 M gas for both vaults). Every step is checked by
+[`script/mainnet-check.sh`](./script/mainnet-check.sh), read-only, which prints `key=value`
+lines for the evidence log and stops at the first mismatch; point `ARC_RPC_URL` at a local
+`arc-anvil` fork to rehearse the whole sequence first.
 
 ```bash
-# 1. Vaults (EURC optional), owner-only deposits
-OWNER=<custody wallet> GUARDIAN=<guardian> RECOVERY=<recovery> \
-USDC_MORPHO_TARGET=<usdc target> [EURC_MORPHO_TARGET=<eurc target>] \
-arc-forge script script/Deploy.s.sol --rpc-url arc --account <deployer keystore> \
+# 0. Pre-flight, within the hour: targets, gates, abdications, liquidity, roles, gas, and the
+#    vault addresses predicted from the deployer's nonce
+PHASE=preflight OWNER=<owner> GUARDIAN=<guardian> RECOVERY=<recovery> DEPLOYER=<deployer> \
+  script/mainnet-check.sh
+
+# 1. Both vaults, owner-only deposits. Run once without --broadcast: the simulation must
+#    return the predicted addresses.
+EXPECTED_CHAIN_ID=5042 OWNER=<owner> GUARDIAN=<guardian> RECOVERY=<recovery> \
+USDC_MORPHO_TARGET=0x8E357432CC12ff425c36432F312968aEb16112AF \
+EURC_MORPHO_TARGET=0x389abDf4355e0cF4f19298179991705a98f21c18 \
+arc-forge script script/Deploy.s.sol --rpc-url arc_mainnet --account <deployer keystore> \
   --sender <deployer> --broadcast
+
+# 1b. Before any owner signature
+PHASE=post-deploy OWNER=<owner> GUARDIAN=<guardian> RECOVERY=<recovery> \
+  USDC_VAULT=<usdc vault> EURC_VAULT=<eurc vault> script/mainnet-check.sh
 
 # 2. Source verification: the Blockscout API of explorer.arc.io sits behind a bot challenge,
 #    so publish on Sourcify, then upload the standard JSON input on explorer.arc.io by hand
@@ -195,10 +221,14 @@ arc-forge verify-contract <vault> src/MorphoYieldVault.sol:MorphoYieldVault --ch
 arc-forge verify-contract <vault> src/MorphoYieldVault.sol:MorphoYieldVault --chain 5042 \
   --constructor-args "$ARGS" --show-standard-json-input > standard-input.json
 
-# 3. Calldata for the three custody signatures: approve, deposit, then redeem
-cast calldata "approve(address,uint256)" <vault> <amount>          # to the asset
-cast calldata "deposit(uint256,address)" <amount> <custody wallet>  # to the vault
-cast calldata "redeem(uint256,address,address)" <shares> <custody wallet> <custody wallet>
+# 3. Calldata for the three owner signatures, to compare with the wallet's raw data.
+#    Assets have 6 decimals (100 USDC = 100000000); vault shares have 12. Redeem the exact
+#    balanceOf(owner), first field only: cast appends "[1e14]".
+cast calldata "approve(address,uint256)" <vault> <amount>   # to the asset
+cast calldata "deposit(uint256,address)" <amount> <owner>   # to the vault
+cast calldata "redeem(uint256,address,address)" <shares> <owner> <owner>
+PHASE=post-deposit OWNER=<owner> USDC_VAULT=<usdc vault> AMOUNT=<amount> script/mainnet-check.sh
+PHASE=post-redeem OWNER=<owner> USDC_VAULT=<usdc vault> script/mainnet-check.sh
 ```
 
 ## CCTP v2: USDC from Base to Arc
@@ -208,13 +238,18 @@ exact amount, burns it on Base with `depositForBurn` to Arc (CCTP domain 26, Fas
 waits for Circle's attestation and relays `receiveMessage` on Arc. It runs on Node 24 with no
 dependency and signs through `cast` and a keystore. Base Sepolia to Arc testnet by default;
 `NETWORK=mainnet` moves real USDC from Base to Arc mainnet. The keystore relays the mint on
-Arc, so it needs a little USDC there for gas; the recipient can be any address.
+Arc, so it needs a little USDC there for gas; the recipient can be any address. On mainnet
+nothing has a default: `RECIPIENT`, `AMOUNT` and `ACCOUNT` are required, addresses must carry
+their EIP-55 checksum, `SENDER` must be the keystore's address, the fee is capped at 10 bps,
+and the operator types the recipient's last four characters before anything is sent. Every
+hash is printed as soon as its transaction is sent: before re-running after an error, look for
+a `depositForBurn` from the sender on Basescan and resume with `BURN_TX`.
 
 ```bash
 SENDER=<address> node scripts/cctp/base-sepolia-to-arc.ts
-# mainnet, minting to the custody wallet
-NETWORK=mainnet SENDER=<address> RECIPIENT=<custody wallet> AMOUNT=<units> \
-  node scripts/cctp/base-sepolia-to-arc.ts
+# mainnet
+NETWORK=mainnet SENDER=<keystore address> RECIPIENT=<address> AMOUNT=<units> \
+  ACCOUNT=<keystore> node scripts/cctp/base-sepolia-to-arc.ts
 # resume an interrupted transfer from its burn
 SENDER=<address> BURN_TX=<burn tx hash> node scripts/cctp/base-sepolia-to-arc.ts
 ```

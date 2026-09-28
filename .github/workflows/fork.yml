@@ -1,7 +1,8 @@
 name: Arc mainnet fork
 
-# Runs the vault against a real Morpho Vault V2 on a local fork of Arc mainnet. Nothing is
-# broadcast. Kept out of the main CI: it depends on the public Arc RPC being reachable.
+# Runs the vault against a real Morpho Vault V2 on a local fork of Arc mainnet, rehearses the
+# mainnet deployment through the deployment script, and fails loudly if a Galaxy target ever
+# un-abdicates an exit gate (it cannot) or sets a gate. Nothing is broadcast. Kept out of the main CI: it depends on the public Arc RPC being reachable.
 on:
   push:
     branches: [main]
@@ -9,9 +10,12 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   fork:
-    name: Galaxy USDC fork test
+    name: Arc mainnet fork tests
     runs-on: ubuntu-latest
     env:
       ARC_FOUNDRY_VERSION: v0.8.0-2
@@ -31,5 +35,5 @@ jobs:
       - name: Fork test
         run: |
           "$HOME/arc-foundry/forge" test --isolate -vvv \
-            --match-path test/fork/MorphoArcMainnet.fork.t.sol \
+            --match-path 'test/fork/*' \
             --fork-url https://rpc.mainnet.arc.io
