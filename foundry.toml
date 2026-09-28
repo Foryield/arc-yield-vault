@@ -21,7 +21,7 @@ runs = 10000
 
 [rpc_endpoints]
 arc_testnet = "https://rpc.testnet.arc.io"
-arc = "https://rpc.mainnet.arc.io"
+arc_mainnet = "https://rpc.mainnet.arc.io"
 
 [fmt]
 line_length = 100
