@@ -13,6 +13,18 @@ node_modules/
 .env.*
 !.env.example
 *.keystore
+keystores/
+UTC--*
+
+# Source verification input, generated at the root: may hold absolute local paths
+standard-input.json
+
+# Rehearsals on an arc-anvil fork keep chain id 5042: their broadcasts must never pass for
+# mainnet evidence. The real deployment's file is added deliberately with `git add -f`.
+/broadcast/**/5042/
+
+# Personal Claude Code settings
+.claude/settings.local.json
 
 .DS_Store
 coverage.txt
