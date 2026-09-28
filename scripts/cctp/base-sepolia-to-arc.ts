@@ -10,7 +10,14 @@
 // this process or its environment. Amounts are bigint base units (USDC has 6 decimals).
 //
 // Usage (Node 24+, no dependency):
-//   SENDER=0x… [RECIPIENT=0x…] [AMOUNT=1000000] [ACCOUNT=arc-depositor] [NETWORK=mainnet] \
+//   SENDER=0x… [RECIPIENT=0x…] [AMOUNT=1000000] [ACCOUNT=arc-depositor] \
+//     node scripts/cctp/base-sepolia-to-arc.ts
+//
+// On mainnet nothing has a default: RECIPIENT, AMOUNT and ACCOUNT are required, addresses must be
+// EIP-55 checksummed, SENDER must be the keystore's own address, the relaying key must already
+// hold USDC for gas on Arc, and the transfer waits for the operator to type the last four
+// characters of the recipient:
+//   NETWORK=mainnet SENDER=0x… RECIPIENT=0x… AMOUNT=5000000 ACCOUNT=<keystore> \
 //     node scripts/cctp/base-sepolia-to-arc.ts
 //
 // The same keystore signs the burn on Base and relays the mint on Arc: on Arc it needs a little
@@ -19,8 +26,12 @@
 // Resuming after an interruption (e.g. an attestation outage): a burn stays mintable once
 // Circle attests it, so pass its hash to skip straight to steps 3 and 4:
 //   SENDER=0x… BURN_TX=0x… node scripts/cctp/base-sepolia-to-arc.ts
+// Every transaction hash is printed as soon as it is sent. Before re-running after an error, look
+// for a depositForBurn from the sender on the Base explorer: if one exists, resume with BURN_TX
+// instead of burning twice.
 
 import { execFileSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 
 // CCTP v2 contracts share their addresses across the chains of one network (deterministic
 // deployment). Mainnet addresses checked on chain on 2026-09-23 (localDomain 6 on Base, 26 on Arc).
@@ -57,6 +68,10 @@ const IRIS = NETWORK.iris;
 const FAST_FINALITY = 1000; // Fast Transfer; 2000 would wait for Base finality at no fee.
 const POLL_INTERVAL_MS = 5_000;
 const POLL_TIMEOUT_MS = 30 * 60_000;
+const HTTP_TIMEOUT_MS = 15_000;
+// Hard cap on the Fast Transfer fee, whatever the fee API answers: 10 basis points.
+const MAX_FEE_BPS = 10n;
+const MAINNET = networkName === "mainnet";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
@@ -65,10 +80,18 @@ function requireAddress(name: string, value: string | undefined): string {
   return value;
 }
 
+function requireOnMainnet(name: string): string | undefined {
+  const value = process.env[name];
+  if (MAINNET && !value) throw new Error(`${name} is required on mainnet: no default applies`);
+  return value;
+}
+
 const sender = requireAddress("SENDER", process.env.SENDER);
-const recipient = requireAddress("RECIPIENT", process.env.RECIPIENT ?? sender);
-const account = process.env.ACCOUNT ?? "arc-depositor";
-const amount = BigInt(process.env.AMOUNT ?? "1000000");
+const recipient = requireAddress("RECIPIENT", requireOnMainnet("RECIPIENT") ?? sender);
+const account = requireOnMainnet("ACCOUNT") ?? "arc-depositor";
+const amountInput = requireOnMainnet("AMOUNT") ?? "1000000";
+if (!/^[0-9]+$/.test(amountInput)) throw new Error("AMOUNT must be an integer in USDC base units (6 decimals)");
+const amount = BigInt(amountInput);
 if (amount <= 0n) throw new Error("AMOUNT must be positive");
 const resumeBurnTx = process.env.BURN_TX;
 if (resumeBurnTx !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(resumeBurnTx)) {
@@ -77,7 +100,10 @@ if (resumeBurnTx !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(resumeBurnTx)) {
 
 function cast(args: string[]): string {
   // stdin and stderr stay on the terminal so cast can prompt for the keystore password.
-  return execFileSync("cast", args, { stdio: ["inherit", "pipe", "inherit"], encoding: "utf8" }).trim();
+  // CAST_ASYNC from the environment would make `cast receipt` give up on a pending transaction.
+  const env = { ...process.env };
+  delete env.CAST_ASYNC;
+  return execFileSync("cast", args, { stdio: ["inherit", "pipe", "inherit"], encoding: "utf8", env }).trim();
 }
 
 function read(rpc: string, to: string, signature: string, ...args: string[]): bigint {
@@ -85,11 +111,45 @@ function read(rpc: string, to: string, signature: string, ...args: string[]): bi
 }
 
 function send(rpc: string, to: string, signature: string, ...args: string[]): string {
-  const receipt = JSON.parse(
-    cast(["send", to, signature, ...args, "--rpc-url", rpc, "--account", account, "--json"]),
-  );
-  if (receipt.status !== "0x1") throw new Error(`transaction ${receipt.transactionHash} reverted`);
-  return receipt.transactionHash;
+  // --async returns the hash as soon as the transaction is sent: it is printed before waiting,
+  // so a receipt timeout never hides a burn that went through.
+  const hash = cast(["send", to, signature, ...args, "--rpc-url", rpc, "--account", account, "--async"]);
+  console.log(`Sent ${signature.split("(")[0]}: ${hash}`);
+  const receipt = JSON.parse(cast(["receipt", hash, "--rpc-url", rpc, "--json"]));
+  if (receipt.status !== "0x1") throw new Error(`transaction ${hash} reverted`);
+  return hash;
+}
+
+function checksummed(name: string, address: string): void {
+  if (cast(["to-check-sum-address", address]) !== address) {
+    throw new Error(`${name} must be written with its EIP-55 checksum`);
+  }
+}
+
+// Mainnet only: the checks that stand between a typo and USDC minted to nobody.
+async function confirmMainnet(): Promise<void> {
+  checksummed("SENDER", sender);
+  checksummed("RECIPIENT", recipient);
+  const signer = cast(["wallet", "address", "--account", account]);
+  if (signer.toLowerCase() !== sender.toLowerCase()) {
+    throw new Error(`SENDER ${sender} is not the address of keystore ${account} (${signer})`);
+  }
+  if (BigInt(cast(["balance", sender, "--rpc-url", ARC.rpc])) === 0n) {
+    throw new Error(`${sender} holds no USDC on ${ARC.name} to pay for relaying the mint`);
+  }
+  console.log(`Network:   ${BASE.name} -> ${ARC.name}`);
+  console.log(`Amount:    ${formatUsdc(amount)}`);
+  console.log(`Recipient: ${recipient}`);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const typed = await rl.question("Type the last 4 characters of the recipient to proceed: ");
+  rl.close();
+  if (typed.trim().toLowerCase() !== recipient.slice(-4).toLowerCase()) {
+    throw new Error("confirmation did not match the recipient: nothing was sent");
+  }
+}
+
+async function fetchWithTimeout(url: string): Promise<Response> {
+  return fetch(url, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
 }
 
 function toBytes32(address: string): string {
@@ -103,7 +163,7 @@ function formatUsdc(units: bigint): string {
 }
 
 async function fastTransferMaxFee(): Promise<bigint> {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${IRIS}/v2/burn/USDC/fees/${BASE.domain}/${ARC.domain}`,
   );
   if (!response.ok) throw new Error(`fee lookup failed: HTTP ${response.status}`);
@@ -112,16 +172,22 @@ async function fastTransferMaxFee(): Promise<bigint> {
   if (!fast) throw new Error(`no Fast Transfer fee tier for ${BASE.name} to ${ARC.name}`);
   // minimumFee is in basis points (e.g. 1.3). Scale to hundredths of a basis point to stay in
   // integers, then round the fee up so the burn is never rejected for an underpaid fee.
-  const hundredthsOfBps = BigInt(Math.round(fast.minimumFee * 100));
-  return (amount * hundredthsOfBps + 999_999n) / 1_000_000n;
+  // Round to 1e-4 bps first, so that float noise (1.1 * 100 = 110.00000000000001) is not rounded up.
+  const hundredthsOfBps = BigInt(Math.ceil(Math.round(fast.minimumFee * 10_000) / 100));
+  const fee = (amount * hundredthsOfBps + 999_999n) / 1_000_000n;
+  const cap = (amount * MAX_FEE_BPS) / 10_000n;
+  if (fee > cap) throw new Error(`fee ${formatUsdc(fee)} exceeds the ${MAX_FEE_BPS} bps cap`);
+  return fee;
 }
 
 async function waitForAttestation(burnHash: string): Promise<{ message: string; attestation: string }> {
   const url = `${IRIS}/v2/messages/${BASE.domain}?transactionHash=${burnHash}`;
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const response = await fetch(url);
-    if (response.ok) {
+    const response = await fetchWithTimeout(url).catch(() => undefined);
+    if (response === undefined || response.status === 429 || response.status >= 500) {
+      // Transient: the burn stays attestable, keep polling until the deadline.
+    } else if (response.ok) {
       const body: { messages?: { status: string; message: string; attestation: string }[] } =
         await response.json();
       const entry = body.messages?.[0];
@@ -139,8 +205,10 @@ async function main(): Promise<void> {
     const chainId = BigInt(cast(["chain-id", "--rpc-url", chain.rpc]));
     if (chainId !== chain.chainId) throw new Error(`${chain.rpc} is chain ${chainId}, not ${chain.chainId}`);
   }
+  if (MAINNET) await confirmMainnet();
 
   const arcBefore = read(ARC.rpc, USDC_ARC, "balanceOf(address)(uint256)", recipient);
+  if (!resumeBurnTx) console.log(`Base nonce of ${sender}: ${cast(["nonce", sender, "--rpc-url", BASE.rpc])}`);
   const started = Date.now();
   const burn = resumeBurnTx ? { burnHash: resumeBurnTx } : await approveAndBurn();
   console.log(`Burned: ${burn.burnHash}. Waiting for Circle's attestation…`);
