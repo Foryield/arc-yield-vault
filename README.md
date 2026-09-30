@@ -6,15 +6,16 @@ chain. Every deposit of USDC or EURC is supplied to a Morpho Vault V2 in the sam
 transaction. This repository is the public demonstration submitted to the
 Circle Developer Grants Program.
 
-ForYield is not an authorised crypto-asset service provider. Nothing here is an
-offer of a financial service; the deployments below are testnet only.
+ForYield is not an authorised crypto-asset service provider (MiCA CASP applicant). Nothing
+here is an offer of a financial service: the mainnet vaults hold ForYield's own capital only,
+and their deposits are reserved to ForYield on chain.
 
 > **Scope.** A base vault (`YieldVault`: proportional ERC-4626 shares, first-depositor
 > inflation protection, owner / guardian / recovery roles held by three distinct
 > addresses, emergency pause and a fixed-destination evacuation) and its Morpho
-> subclass (`MorphoYieldVault`: one immutable Morpho Vault V2 target per vault). Deployed
-> on Arc testnet for USDC and EURC, with deposit and redemption evidence, plus a CCTP v2
-> script that moves USDC from Base Sepolia to Arc. StableFX, Gateway, an Aave V4 adapter
+> subclass (`MorphoYieldVault`: one immutable Morpho Vault V2 target per vault). Live on
+> Arc mainnet for USDC and EURC against curated Galaxy vaults, and on Arc testnet with
+> deposit and redemption evidence, plus a CCTP v2 script that moves USDC from Base to Arc. StableFX, Gateway, an Aave V4 adapter
 > and a compliance event schema are planned milestones, not part of this code.
 
 ## Live demo
@@ -25,6 +26,32 @@ amount, and links every transaction to the explorer. `?vault=eurc` opens the EUR
 Testnet USDC and EURC come from [Circle's faucet](https://faucet.circle.com). The page is a
 static Next.js export in [`web/`](./web/), deployed on Render from
 [`render.yaml`](./render.yaml).
+
+## Mainnet deployment
+
+Network: Arc **mainnet**, chain id 5042, explorer [arc.etherscan.io](https://arc.etherscan.io).
+Deployed on 2026-09-29 (block 23338354) from this repository's `main` with
+[`script/Deploy.s.sol`](./script/Deploy.s.sol); both sources are verified (Exact Match).
+
+| Component | Address | Morpho target |
+|---|---|---|
+| MorphoYieldVault "ForYield Arc USDC" (fyUSDC) | [`0x007977235da099E1B29cc63b0D842472B5ecef28`](https://arc.etherscan.io/address/0x007977235da099E1B29cc63b0D842472B5ecef28#code) | Galaxy USDC [`0x8E357432CC12ff425c36432F312968aEb16112AF`](https://arc.etherscan.io/address/0x8E357432CC12ff425c36432F312968aEb16112AF) |
+| MorphoYieldVault "ForYield Arc EURC" (fyEURC) | [`0x0fD1f8f3dbc4F78e34F85aE5592a3C873d9512d9`](https://arc.etherscan.io/address/0x0fD1f8f3dbc4F78e34F85aE5592a3C873d9512d9#code) | Galaxy EURC [`0x389abDf4355e0cF4f19298179991705a98f21c18`](https://arc.etherscan.io/address/0x389abDf4355e0cF4f19298179991705a98f21c18) |
+
+Deployment transactions: USDC vault
+[`0x055424fd…2bc11`](https://arc.etherscan.io/tx/0x055424fd23e4a3862fbdb9aca01ac400ed48c2ecb0aaee492ac761a13cb2bc11),
+EURC vault
+[`0xfeae6251…b5cf9`](https://arc.etherscan.io/tx/0xfeae625121b09f260ecce1855d3af4ac5f6c43b9eb64b421439b99dc77eb5cf9).
+
+- **Own capital only.** `OWNER_ONLY_DEPOSITS` is `true` on both vaults: any other depositor is
+  refused on chain (`ERC4626ExceededMaxDeposit`, or `DepositNotAllowed` when depositing for
+  the owner). The USDC vault holds a position of ForYield's own capital in Galaxy USDC.
+- **No curator can lock the exits.** On both Galaxy targets the three setters that could gate
+  an exit (`setReceiveSharesGate`, `setSendSharesGate`, `setReceiveAssetsGate`) are abdicated
+  for good; the deployment script refuses any mainnet target that is not pinned or whose exit
+  gates are not abdicated, and the weekly fork test checks it against the live contracts.
+- **Checks.** [`script/mainnet-check.sh`](./script/mainnet-check.sh) re-reads every role,
+  flag and target on chain, read-only.
 
 ## Testnet deployments
 
@@ -45,7 +72,7 @@ contracts deployed by us from [`morpho-org/vault-v2`](https://github.com/morpho-
 (pinned commit, see [`script/deploy-morpho-target.sh`](./script/deploy-morpho-target.sh)).
 They have no adapter and no curator: deposits sit idle inside them and earn nothing. Real
 Morpho yield is demonstrated against a curated vault on Arc mainnet in a local fork test
-(see [Tests](#tests)); nothing is deployed on mainnet.
+(see [Tests](#tests)) and live on mainnet (see [Mainnet deployment](#mainnet-deployment)).
 
 Evidence, with every transaction hash, block and post-state read on chain:
 
@@ -107,8 +134,9 @@ is in [docs/demo/fil-rouge-testeur.md](./docs/demo/fil-rouge-testeur.md) (French
   though Morpho may refuse a deposit; such a deposit reverts as a whole.
 - **Evacuation.** After `emergencyWithdraw`, the vault is terminal: shares can no longer be
   redeemed on chain, and holders are made whole off chain from the recovery address.
-- **Testnet keys.** The testnet roles are local keystores. A production deployment would put
-  the owner behind a multi-party custody quorum and the recovery address on a multisig.
+- **Keys.** The testnet roles are local keystores; the mainnet roles are three distinct keys
+  held by ForYield's management, for an own-capital demonstration. A production deployment
+  puts the owner behind a multi-party custody quorum and the recovery address on a multisig.
 
 A security review of the contracts found no fund-theft, share-price manipulation, approval
 or reentrancy issue; its one medium finding is the target-gating risk above.
@@ -256,18 +284,17 @@ SENDER=<address> BURN_TX=<burn tx hash> node scripts/cctp/base-sepolia-to-arc.ts
 
 ## Circle products used
 
-- **Arc**: the vaults, their Morpho targets and all evidence transactions run on Arc testnet,
-  with USDC as the gas token.
-- **USDC** and **EURC**: the two vault assets, Circle's official testnet tokens on Arc.
-- **CCTP v2**: moves USDC from Base Sepolia to Arc.
+- **Arc**: the vaults run on Arc mainnet against curated Morpho vaults, and on Arc testnet
+  with all evidence transactions, with USDC as the gas token.
+- **USDC** and **EURC**: the two vault assets, Circle's official tokens on Arc.
+- **CCTP v2**: moves USDC from Base (Base Sepolia on testnet) to Arc.
 
 ## Roadmap
 
 - **Delivered (this repository)**: base vault, Morpho Vault V2 subclass, USDC and EURC
-  instances on Arc testnet, CCTP v2 funding script, mainnet fork test against a curated
-  Morpho vault.
-- **Next**: Arc mainnet deployment behind a custody quorum; EURC and USDC instances on
-  curated Morpho vaults; StableFX for USDC and EURC conversion; Gateway for unified USDC
+  instances on Arc testnet and Arc mainnet (own capital, curated Galaxy vaults), CCTP v2
+  funding script, mainnet fork tests.
+- **Next**: owner behind a multi-party custody quorum and an external audit; StableFX for USDC and EURC conversion; Gateway for unified USDC
   balances across chains; an Aave V4 adapter (Aave runs V4 on Arc, whose hub-and-spoke
   interface differs from Aave V3's `IPool`); a compliance event schema for EU reporting.
 
