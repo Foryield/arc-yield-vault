@@ -7,6 +7,31 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {YieldVault} from "../../src/YieldVault.sol";
 import {MorphoYieldVault} from "../../src/MorphoYieldVault.sol";
 
+/// @dev What a Morpho Vault V2 can pay out right now: its idle assets, plus the free liquidity
+///      of the Morpho Blue market behind its liquidity adapter when one is set.
+interface IVaultV2Liquidity {
+    function liquidityAdapter() external view returns (address);
+}
+
+interface IMarketV1Adapter {
+    function morpho() external view returns (address);
+    function marketIds(uint256 index) external view returns (bytes32);
+}
+
+interface IMorphoBlue {
+    function market(bytes32 id)
+        external
+        view
+        returns (
+            uint128 totalSupplyAssets,
+            uint128 totalSupplyShares,
+            uint128 totalBorrowAssets,
+            uint128 totalBorrowShares,
+            uint128 lastUpdate,
+            uint128 fee
+        );
+}
+
 /// @notice Runs the vault against a real, curated Morpho Vault V2 on a local fork of Arc mainnet.
 ///         Nothing is broadcast. Requires Arc Foundry, which implements Arc's USDC precompile:
 ///
@@ -48,6 +73,7 @@ contract MorphoArcMainnetForkTest is Test {
     }
 
     function test_fork_depositSuppliesGalaxyAndRedeemReturnsUsdc() public {
+        _skipUnlessTargetCanPay(GALAXY_USDC, 10e6); // a day of interest on 9,000 USDC, with margin
         assertEq(GALAXY_USDC.maxDeposit(address(vault)), 0); // Vault V2 trait, never relied upon
         assertEq(USDC.balanceOf(owner), 10_000e6);
 
@@ -62,17 +88,18 @@ contract MorphoArcMainnetForkTest is Test {
         assertEq(USDC.allowance(address(vault), address(GALAXY_USDC)), 0);
         assertApproxEqAbs(vault.totalAssets(), 9_000e6, 2);
 
-        // Galaxy's rate was about 0.0025 % a year on 2026-09-21: a year of interest on 9,000 USDC
-        // is roughly 0.2 USDC, well above the two units of rounding dust.
-        vm.warp(block.timestamp + 365 days);
-        uint256 valueAfterYear = vault.totalAssets();
-        assertGt(valueAfterYear, 9_000e6); // real Morpho interest, not a mock
+        // A day of real Morpho interest: well above the two units of rounding dust at any rate
+        // Galaxy has shown (0.05 % to 0.5 % a year in September 2026), and small enough for the
+        // exit to stay payable when the curated market is almost fully lent out.
+        vm.warp(block.timestamp + 1 days);
+        uint256 valueAfterDay = vault.totalAssets();
+        assertGt(valueAfterDay, 9_000e6); // real Morpho interest, not a mock
 
         vm.prank(owner);
         uint256 out = vault.redeem(shares, receiver, owner);
         assertEq(USDC.balanceOf(receiver), out);
-        assertLe(out, valueAfterYear); // rounding stays in the vault's favor
-        assertApproxEqAbs(out, valueAfterYear, 2);
+        assertLe(out, valueAfterDay); // rounding stays in the vault's favor
+        assertApproxEqAbs(out, valueAfterDay, 2);
         assertEq(vault.totalSupply(), 0);
     }
 
@@ -83,5 +110,25 @@ contract MorphoArcMainnetForkTest is Test {
         vault.deposit(1_000e6, owner);
         vm.stopPrank();
         assertEq(vault.totalSupply(), 0);
+    }
+
+    /// @dev Exits are paid from the target's idle assets, then from the free liquidity of the
+    ///      market behind its liquidity adapter. A test that accrues interest needs that much on
+    ///      top of its own principal (which is always there: nobody else trades on the fork). When
+    ///      the live market is fully lent out, the test is skipped with a message, before it
+    ///      changes any state; any other failure still fails it.
+    function _skipUnlessTargetCanPay(IERC4626 target, uint256 needed) internal {
+        uint256 available = IERC20(target.asset()).balanceOf(address(target));
+        address adapter = IVaultV2Liquidity(address(target)).liquidityAdapter();
+        if (adapter != address(0)) {
+            IMorphoBlue morpho = IMorphoBlue(IMarketV1Adapter(adapter).morpho());
+            (uint128 supplied,, uint128 borrowed,,,) =
+                morpho.market(IMarketV1Adapter(adapter).marketIds(0));
+            available += supplied - borrowed;
+        }
+        if (available < needed) {
+            emit log_named_uint("SKIPPED: target liquidity, units", available);
+            vm.skip(true);
+        }
     }
 }

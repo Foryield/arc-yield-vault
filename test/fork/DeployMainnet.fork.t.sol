@@ -16,6 +16,31 @@ interface IMorphoVaultV2Curator {
     function submit(bytes calldata data) external;
 }
 
+/// @dev What a Morpho Vault V2 can pay out right now: its idle assets, plus the free liquidity
+///      of the Morpho Blue market behind its liquidity adapter when one is set.
+interface IVaultV2Liquidity {
+    function liquidityAdapter() external view returns (address);
+}
+
+interface IMarketV1Adapter {
+    function morpho() external view returns (address);
+    function marketIds(uint256 index) external view returns (bytes32);
+}
+
+interface IMorphoBlue {
+    function market(bytes32 id)
+        external
+        view
+        returns (
+            uint128 totalSupplyAssets,
+            uint128 totalSupplyShares,
+            uint128 totalBorrowAssets,
+            uint128 totalBorrowShares,
+            uint128 lastUpdate,
+            uint128 fee
+        );
+}
+
 /// @notice Dress rehearsal of the mainnet deployment and of the owner's own-capital round trip,
 ///         on a local fork of Arc mainnet, through the real deployment script and against the
 ///         real Galaxy targets. Nothing is broadcast.
@@ -86,6 +111,7 @@ contract DeployMainnetForkTest is Test {
 
     // F2: the exact sequence the owner will sign, then a full exit.
     function test_fork_ownerRoundTripOfOneHundredUsdc() public {
+        _skipUnlessTargetCanPay(GALAXY_USDC, 1e6); // a day of interest on 100 USDC, with margin
         uint256 shares = _ownerDeposit(AMOUNT);
         assertEq(shares, usdcVault.balanceOf(owner));
         assertEq(usdcVault.totalSupply(), shares);
@@ -252,5 +278,25 @@ contract DeployMainnetForkTest is Test {
         USDC.approve(address(usdcVault), assets);
         shares = usdcVault.deposit(assets, owner);
         vm.stopPrank();
+    }
+
+    /// @dev Exits are paid from the target's idle assets, then from the free liquidity of the
+    ///      market behind its liquidity adapter. A test that accrues interest needs that much on
+    ///      top of its own principal (which is always there: nobody else trades on the fork). When
+    ///      the live market is fully lent out, the test is skipped with a message, before it
+    ///      changes any state; any other failure still fails it.
+    function _skipUnlessTargetCanPay(IERC4626 target, uint256 needed) internal {
+        uint256 available = IERC20(target.asset()).balanceOf(address(target));
+        address adapter = IVaultV2Liquidity(address(target)).liquidityAdapter();
+        if (adapter != address(0)) {
+            IMorphoBlue morpho = IMorphoBlue(IMarketV1Adapter(adapter).morpho());
+            (uint128 supplied,, uint128 borrowed,,,) =
+                morpho.market(IMarketV1Adapter(adapter).marketIds(0));
+            available += supplied - borrowed;
+        }
+        if (available < needed) {
+            emit log_named_uint("SKIPPED: target liquidity, units", available);
+            vm.skip(true);
+        }
     }
 }
