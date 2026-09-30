@@ -8,6 +8,7 @@ dated entry, and earlier entries stay as dated records.
 |---|---|
 | `a1-vault-testnet.md` | MorphoYieldVault on Arc testnet: USDC and EURC instances, deposit and redemption |
 | `a2-cctp.md` | USDC moved from Base Sepolia to Arc testnet with CCTP v2 |
+| README, [Mainnet deployment](../../README.md#mainnet-deployment) | MorphoYieldVault on Arc mainnet: USDC and EURC instances, verified sources, deployment transactions |
 | `screenshots/` | PNG captures per Circle product, for the grant video |
 
 Each entry records:
@@ -19,4 +20,4 @@ Each entry records:
 - **Commit** of this repository the bytecode was built from
 - **Media** (screenshot) path, when visual
 
-Nothing sensitive belongs here: testnet only, public addresses only.
+Nothing sensitive belongs here: public addresses only.
